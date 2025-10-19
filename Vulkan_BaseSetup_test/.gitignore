@@ -12,6 +12,7 @@ CMakeUserPresets.json
 *.cmake
 !CMakeLists.txt
 !CMakePresets.json
+!CMake
 
 # vcpkg
 vcpkg_installed/
