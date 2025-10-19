@@ -7,12 +7,11 @@ lib/
 # CMake generated files
 CMakeCache.txt
 CMakeFiles/
-cmake_install.cmake
 CMakeUserPresets.json
-*.cmake
 !CMakeLists.txt
 !CMakePresets.json
-!/CMake/
+!Cmake/FindVulkan.cmake
+!Cmake/FindVulkanHpp.cmake
 
 # vcpkg
 vcpkg_installed/
