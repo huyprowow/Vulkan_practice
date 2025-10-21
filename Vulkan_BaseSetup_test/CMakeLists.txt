@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 
 project(Vukan_Learn)
 # specify the C++ standard
-#set(CMAKE_CXX_STANDARD 20)
+#set(CMAKE_CXX_STANDARD 17)
 #set(CMAKE_CXX_STANDARD_REQUIRED True)   
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/CMake")
@@ -77,5 +77,4 @@ else()
 endif()
 
 add_executable(Vukan_Learn main.cpp)
-target_link_libraries (${PROJECT_NAME} Vulkan::cppm)
-#target_link_libraries(Vukan_Learn Vulkan::cppm)
+target_link_libraries (${PROJECT_NAME} Vulkan::cppm glfw )
