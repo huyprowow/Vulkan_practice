@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 
 project(Vukan_Learn)
 # specify the C++ standard
-#set(CMAKE_CXX_STANDARD 17)
+#set(CMAKE_CXX_STANDARD 20)
 #set(CMAKE_CXX_STANDARD_REQUIRED True)   
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/CMake")
@@ -76,5 +76,41 @@ else()
   )
 endif()
 
-add_executable(Vukan_Learn main.cpp)
-target_link_libraries (${PROJECT_NAME} Vulkan::cppm glfw )
+function(add_to_build CPP_FILE)
+  cmake_parse_arguments (ARG
+        "" "SHADER" "LIBS;TEXTURES;MODELS" ${ARGN})
+
+  add_executable(${PROJECT_NAME} ${CPP_FILE})
+  set_target_properties (${PROJECT_NAME} PROPERTIES CXX_STANDARD 20)
+
+  # Add compile definition if C++ 20 module is enabled
+  if(ENABLE_CPP20_MODULE)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_CPP20_MODULES=1)
+  endif()
+
+  if(WIN32)
+    if(${CMAKE_GENERATOR} MATCHES "Visual Studio.*")
+      set_target_properties(${PROJECT_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/${CHAPTER_NAME}")
+    endif()
+  endif()
+
+# process arguments passing to function
+  if (DEFINED ARG_LIBS)
+    target_link_libraries(${PROJECT_NAME} ${ARG_LIBS})
+  endif ()
+
+  if (DEFINED ARG_MODELS)
+    list(TRANSFORM ARG_MODELS PREPEND "${CMAKE_SOURCE_DIR}/assets/")
+    file (COPY ${ARG_MODELS} DESTINATION ${CMAKE_BINARY_DIR}/${PROJECT_NAME}/models)
+  endif ()
+  if (DEFINED ARG_TEXTURES)
+    list(TRANSFORM ARG_TEXTURES PREPEND "${CMAKE_SOURCE_DIR}/assets/")
+    file (COPY ${ARG_TEXTURES} DESTINATION ${CMAKE_BINARY_DIR}/${PROJECT_NAME}/textures)
+  endif ()
+
+endfunction()
+
+add_to_build(main.cpp
+LIBS Vulkan::cppm glfw glm::glm
+)
+
