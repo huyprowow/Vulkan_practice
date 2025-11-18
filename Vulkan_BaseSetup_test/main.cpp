@@ -13,6 +13,7 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+
 constexpr uint32_t WIDTH = 800;
 constexpr uint32_t HEIGHT = 600;
 
@@ -50,6 +51,8 @@ private:
     vk::raii::Device device = nullptr; // logical device tuong tac voi physical device
     vk::PhysicalDeviceFeatures deviceFeatures;
     vk::raii::Queue graphicsQueue = nullptr;
+    vk::raii::SurfaceKHR surface = nullptr;
+    
     void initWindow()
     {
         if (!glfwInit())
@@ -65,9 +68,17 @@ private:
     {
         createInstance();      // tao vk instance, thiet lap validation layers, kiem tra cac required layer, extension co duoc ho tro khong
         setupDebugMessenger(); // thiet lap debug messenger cho validation layer
+        createSurface();
         pickPhysicalDevice();  // chon card
         createLogicalDevice(); //
     }
+    void createSurface() {
+    VkSurfaceKHR       _surface;
+    if (glfwCreateWindowSurface(*instance, window, nullptr, &_surface) != 0) {
+        throw std::runtime_error("failed to create window surface!");
+    }
+    surface = vk::raii::SurfaceKHR(instance, _surface);
+}
 
     void pickPhysicalDevice()
     {
