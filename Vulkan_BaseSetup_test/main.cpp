@@ -55,6 +55,12 @@ private:
       vk::KHRSynchronization2ExtensionName,
       vk::KHRCreateRenderpass2ExtensionName};
 
+  vk::raii::SwapchainKHR swapChain = nullptr;
+  std::vector<vk::Image> swapChainImages;
+  vk::Format swapChainImageFormat = vk::Format::eUndefined;
+  vk::Extent2D swapChainExtent;
+  std::vector<vk::raii::ImageView> swapChainImageViews;
+
   void initWindow() {
     if (!glfwInit()) {
       throw std::runtime_error("Failed to initialize GLFW");
@@ -71,14 +77,65 @@ private:
     setupDebugMessenger(); // thiet lap debug messenger cho validation layer
     createSurface();
     pickPhysicalDevice();  // chon card
-    createLogicalDevice(); //
-    createSwapChain();
+    createLogicalDevice(); // sau khi chon physic device (card), can tao logical
+                           // device de tuong tac voi physic device
+    createSwapChain(); // tao swap chain, la mot chuoi cac image de hien thi len
+                       // man hinh
+    createImageViews(); // tao image view, khung nhin cho moi anh cho swap chain
+                        // de xem
+    createGraphicsPipeline(); // tao pipeline de render
+  }
+  void createGraphicsPipeline() {
+    
+  }
+  void createImageViews() {
+    swapChainImageViews.clear();
+
+    vk::ImageViewCreateInfo imageViewCreateInfo{
+        .viewType = vk::ImageViewType::e2D,
+        .format = swapChainImageFormat,
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+    
+    for (auto image : swapChainImages) {
+      imageViewCreateInfo.image = image;
+      swapChainImageViews.emplace_back(device, imageViewCreateInfo);
+    }
   }
 
   void createSwapChain() {
+    auto surfaceCapabilities =
+        physicalDevice.getSurfaceCapabilitiesKHR(surface);
+    swapChainSurfaceFormat =
+        chooseSwapSurfaceFormat(physicalDevice.getSurfaceFormatsKHR(surface));
+    swapChainExtent = chooseSwapExtent(surfaceCapabilities);
+    auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
+    minImageCount = (surfaceCapabilities.maxImageCount > 0 &&
+                     minImageCount > surfaceCapabilities.maxImageCount)
+                        ? surfaceCapabilities.maxImageCount
+                        : minImageCount;
 
+    vk::SwapchainCreateInfoKHR swapChainCreateInfo{
+        .flags = vk::SwapchainCreateFlagsKHR(),
+        .surface = surface,
+        .minImageCount = minImageCount,
+        .imageFormat = swapChainSurfaceFormat.format,
+        .imageColorSpace = swapChainSurfaceFormat.colorSpace,
+        .imageExtent = swapChainExtent,
+        .imageArrayLayers = 1,
+        .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
+        .imageSharingMode = vk::SharingMode::eExclusive,
+        .preTransform = surfaceCapabilities.currentTransform,
+        .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
+        .presentMode = chooseSwapPresentMode(
+            physicalDevice.getSurfacePresentModesKHR(surface)),
+        .clipped = true,
+        .oldSwapchain = nullptr};
+
+    swapChain = vk::raii::SwapchainKHR(device, swapChainCreateInfo);
+    swapChainImages = swapChain.getImages();
+
+    swapChainImageFormat = swapChainSurfaceFormat.format;
   }
-
 
   void createSurface() {
     VkSurfaceKHR _surface;
