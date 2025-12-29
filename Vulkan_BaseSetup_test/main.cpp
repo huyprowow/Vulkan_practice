@@ -56,6 +56,7 @@ private:
       vk::KHRCreateRenderpass2ExtensionName};
 
   vk::raii::SwapchainKHR swapChain = nullptr;
+  vk::SurfaceFormatKHR swapChainSurfaceFormat;
   std::vector<vk::Image> swapChainImages;
   vk::Format swapChainImageFormat = vk::Format::eUndefined;
   vk::Extent2D swapChainExtent;
@@ -84,57 +85,6 @@ private:
     createImageViews(); // tao image view, khung nhin cho moi anh cho swap chain
                         // de xem
     createGraphicsPipeline(); // tao pipeline de render
-  }
-  void createGraphicsPipeline() {
-    
-  }
-  void createImageViews() {
-    swapChainImageViews.clear();
-
-    vk::ImageViewCreateInfo imageViewCreateInfo{
-        .viewType = vk::ImageViewType::e2D,
-        .format = swapChainImageFormat,
-        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
-    
-    for (auto image : swapChainImages) {
-      imageViewCreateInfo.image = image;
-      swapChainImageViews.emplace_back(device, imageViewCreateInfo);
-    }
-  }
-
-  void createSwapChain() {
-    auto surfaceCapabilities =
-        physicalDevice.getSurfaceCapabilitiesKHR(surface);
-    swapChainSurfaceFormat =
-        chooseSwapSurfaceFormat(physicalDevice.getSurfaceFormatsKHR(surface));
-    swapChainExtent = chooseSwapExtent(surfaceCapabilities);
-    auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
-    minImageCount = (surfaceCapabilities.maxImageCount > 0 &&
-                     minImageCount > surfaceCapabilities.maxImageCount)
-                        ? surfaceCapabilities.maxImageCount
-                        : minImageCount;
-
-    vk::SwapchainCreateInfoKHR swapChainCreateInfo{
-        .flags = vk::SwapchainCreateFlagsKHR(),
-        .surface = surface,
-        .minImageCount = minImageCount,
-        .imageFormat = swapChainSurfaceFormat.format,
-        .imageColorSpace = swapChainSurfaceFormat.colorSpace,
-        .imageExtent = swapChainExtent,
-        .imageArrayLayers = 1,
-        .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
-        .imageSharingMode = vk::SharingMode::eExclusive,
-        .preTransform = surfaceCapabilities.currentTransform,
-        .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-        .presentMode = chooseSwapPresentMode(
-            physicalDevice.getSurfacePresentModesKHR(surface)),
-        .clipped = true,
-        .oldSwapchain = nullptr};
-
-    swapChain = vk::raii::SwapchainKHR(device, swapChainCreateInfo);
-    swapChainImages = swapChain.getImages();
-
-    swapChainImageFormat = swapChainSurfaceFormat.format;
   }
 
   void createSurface() {
@@ -295,6 +245,92 @@ private:
     graphicsQueue =
         vk::raii::Queue(device, queueIndex, 0); // hang doi lenh do hoa
   }
+
+  void createSwapChain() {
+    auto surfaceCapabilities =
+        physicalDevice.getSurfaceCapabilitiesKHR(surface);
+    swapChainSurfaceFormat =
+        chooseSwapSurfaceFormat(physicalDevice.getSurfaceFormatsKHR(surface));
+    swapChainExtent = chooseSwapExtent(surfaceCapabilities);
+    auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
+    minImageCount = (surfaceCapabilities.maxImageCount > 0 &&
+                     minImageCount > surfaceCapabilities.maxImageCount)
+                        ? surfaceCapabilities.maxImageCount
+                        : minImageCount;
+
+    vk::SwapchainCreateInfoKHR swapChainCreateInfo{
+        .flags = vk::SwapchainCreateFlagsKHR(),
+        .surface = surface,
+        .minImageCount = minImageCount,
+        .imageFormat = swapChainSurfaceFormat.format,
+        .imageColorSpace = swapChainSurfaceFormat.colorSpace,
+        .imageExtent = swapChainExtent,
+        .imageArrayLayers = 1,
+        .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
+        .imageSharingMode = vk::SharingMode::eExclusive,
+        .preTransform = surfaceCapabilities.currentTransform,
+        .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
+        .presentMode = chooseSwapPresentMode(
+            physicalDevice.getSurfacePresentModesKHR(surface)),
+        .clipped = true,
+        .oldSwapchain = nullptr};
+
+    swapChain = vk::raii::SwapchainKHR(device, swapChainCreateInfo);
+    swapChainImages = swapChain.getImages();
+  }
+  static vk::SurfaceFormatKHR chooseSwapSurfaceFormat(
+      const std::vector<vk::SurfaceFormatKHR> &availableFormats) {
+    assert(!availableFormats.empty());
+    const auto formatIt =
+        std::ranges::find_if(availableFormats, [](const auto &format) {
+          return format.format == vk::Format::eB8G8R8A8Srgb &&
+                 format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
+        });
+    return formatIt != availableFormats.end() ? *formatIt : availableFormats[0];
+  }
+
+  vk::Extent2D
+  chooseSwapExtent(const vk::SurfaceCapabilitiesKHR &capabilities) {
+    if (capabilities.currentExtent.width != 0xFFFFFFFF) {
+      return capabilities.currentExtent;
+    }
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
+
+    return {std::clamp<uint32_t>(width, capabilities.minImageExtent.width,
+                                 capabilities.maxImageExtent.width),
+            std::clamp<uint32_t>(height, capabilities.minImageExtent.height,
+                                 capabilities.maxImageExtent.height)};
+  }
+
+  static vk::PresentModeKHR chooseSwapPresentMode(
+      const std::vector<vk::PresentModeKHR> &availablePresentModes) {
+    assert(std::ranges::any_of(availablePresentModes, [](auto presentMode) {
+      return presentMode == vk::PresentModeKHR::eFifo;
+    }));
+    return std::ranges::any_of(availablePresentModes,
+                               [](const vk::PresentModeKHR value) {
+                                 return vk::PresentModeKHR::eMailbox == value;
+                               })
+               ? vk::PresentModeKHR::eMailbox
+               : vk::PresentModeKHR::eFifo;
+  }
+
+  void createImageViews() {
+    swapChainImageViews.clear();
+
+    vk::ImageViewCreateInfo imageViewCreateInfo{
+        .viewType = vk::ImageViewType::e2D,
+        .format = swapChainImageFormat,
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+
+    for (auto image : swapChainImages) {
+      imageViewCreateInfo.image = image;
+      swapChainImageViews.emplace_back(device, imageViewCreateInfo);
+    }
+  }
+
+  void createGraphicsPipeline() {}
 
   // tim queue family ho tro cac lenh do hoa
   // uint32_t findQueueFamilies(vk::raii::PhysicalDevice physicalDevice)

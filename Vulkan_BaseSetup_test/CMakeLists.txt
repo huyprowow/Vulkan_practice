@@ -20,6 +20,13 @@ find_package (glm REQUIRED)
 find_package (tinyobjloader REQUIRED)
 find_package (Vulkan REQUIRED)
 
+#slang
+# add_executable (glslang::validator IMPORTED)
+# find_program (GLSLANG_VALIDATOR "glslangValidator" HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
+# set_property (TARGET glslang::validator PROPERTY IMPORTED_LOCATION "${GLSLANG_VALIDATOR}")
+find_program(SLANGC_EXECUTABLE slangc HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
+
+
 # set up Vulkan C++ module only if enabled
 if(ENABLE_CPP20_MODULE)
   add_library(VulkanCppModule)
@@ -76,6 +83,25 @@ else()
   )
 endif()
 
+function (add_slang_shader_target TARGET)
+  cmake_parse_arguments ("SHADER" "" "" "SOURCES" ${ARGN})
+  set (SHADERS_DIR ${CMAKE_CURRENT_LIST_DIR}/shaders)
+  set (ENTRY_POINTS -entry vertMain -entry fragMain)
+  add_custom_command (
+          OUTPUT ${SHADERS_DIR}
+          COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DIR}
+  )
+  add_custom_command (
+          OUTPUT  ${SHADERS_DIR}/slang.spv
+          COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCES} -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name ${ENTRY_POINTS} -o slang.spv
+          WORKING_DIRECTORY ${SHADERS_DIR}
+          DEPENDS ${SHADERS_DIR} ${SHADER_SOURCES}
+          COMMENT "Compiling Slang Shaders"
+          VERBATIM
+  )
+  add_custom_target (${TARGET}_shader DEPENDS ${SHADERS_DIR}/slang.spv)
+endfunction()
+
 function(add_to_build CPP_FILE)
   cmake_parse_arguments (ARG
         "" "SHADER" "LIBS;TEXTURES;MODELS" ${ARGN})
@@ -99,6 +125,16 @@ function(add_to_build CPP_FILE)
     target_link_libraries(${PROJECT_NAME} ${ARG_LIBS})
   endif ()
 
+  if (DEFINED ARG_SHADER)
+    file(GLOB SHADER_SLANG_SOURCES ${CMAKE_CURRENT_LIST_DIR}/shaders/${ARG_SHADER}.slang)
+    if(SHADER_SLANG_SOURCES)
+      add_slang_shader_target(${PROJECT_NAME} SOURCES ${SHADER_SLANG_SOURCES})
+      add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}_shader)
+    else()
+      message(WARNING "Shader file not found: ${CMAKE_CURRENT_LIST_DIR}/shaders/${ARG_SHADER}.slang")
+    endif()
+  endif ()
+
   if (DEFINED ARG_MODELS)
     list(TRANSFORM ARG_MODELS PREPEND "${CMAKE_SOURCE_DIR}/assets/")
     file (COPY ${ARG_MODELS} DESTINATION ${CMAKE_BINARY_DIR}/${PROJECT_NAME}/models)
@@ -110,7 +146,9 @@ function(add_to_build CPP_FILE)
 
 endfunction()
 
+
+
 add_to_build(main.cpp
 LIBS Vulkan::cppm glfw glm::glm
+SHADER shader
 )
-
