@@ -46,10 +46,10 @@ private:
       vk::KHRCreateRenderpass2ExtensionName};
   vk::raii::Device device =
       nullptr; // logical device tuong tac voi physical device
+  uint32_t queueIndex = ~0;
   vk::PhysicalDeviceFeatures deviceFeatures;
   vk::raii::Queue graphicsQueue = nullptr;
   vk::raii::SurfaceKHR surface = nullptr;
-  vk::raii::Queue presentQueue = nullptr;
 
   std::vector<const char *> deviceExtensions = {
       vk::KHRSwapchainExtensionName, vk::KHRSpirv14ExtensionName,
@@ -61,9 +61,17 @@ private:
   std::vector<vk::Image> swapChainImages;
   vk::Format swapChainImageFormat = vk::Format::eUndefined;
   vk::Extent2D swapChainExtent;
+
   std::vector<vk::raii::ImageView> swapChainImageViews;
+
   vk::raii::PipelineLayout pipelineLayout = nullptr;
   vk::raii::Pipeline graphicsPipeline = nullptr;
+  vk::raii::CommandPool commandPool = nullptr;
+  vk::raii::CommandBuffer commandBuffer = nullptr;
+
+  vk::raii::Semaphore presentCompleteSemaphore = nullptr;
+  vk::raii::Semaphore renderFinishedSemaphore = nullptr;
+  vk::raii::Fence drawFence = nullptr;
 
   void initWindow() {
     if (!glfwInit()) {
@@ -88,6 +96,12 @@ private:
     createImageViews(); // tao image view, khung nhin cho moi anh cho swap chain
                         // de xem
     createGraphicsPipeline(); // tao pipeline de render
+    createCommandPool();      // tao command pool luu cac command buffer
+    createCommandBuffer();    // tao command buffer luu cac command
+    createSyncObjects(); // dong bo ( semaphore cho swapchain (chan gpu tranh
+                         // xung dot- xac dinh thu tu thao tac), fence cho viec
+                         // render chi 1 khung hinh tai 1 thoi diem giu gpu cpu
+                         // dong bo)
   }
 
   void createSurface() {
@@ -172,11 +186,16 @@ private:
           });
 
       auto features = device.template getFeatures2<
-          vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features,
+          vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
+          vk::PhysicalDeviceVulkan13Features,
           vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
       bool supportsRequiredFeatures =
+          features.template get<vk::PhysicalDeviceVulkan11Features>()
+              .shaderDrawParameters &&
           features.template get<vk::PhysicalDeviceVulkan13Features>()
               .dynamicRendering &&
+          features.template get<vk::PhysicalDeviceVulkan13Features>()
+              .synchronization2 &&
           features
               .template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
               .extendedDynamicState;
@@ -202,8 +221,7 @@ private:
     std::vector<vk::QueueFamilyProperties> queueFamilyProperties =
         physicalDevice.getQueueFamilyProperties();
 
-    // l ay index dau tien vao queueFamilyProperties ho tro do hoa va present
-    uint32_t queueIndex = ~0;
+    // lay index dau tien vao queueFamilyProperties ho tro do hoa va present
     for (uint32_t qfpIndex = 0; qfpIndex < queueFamilyProperties.size();
          qfpIndex++) {
       if ((queueFamilyProperties[qfpIndex].queueFlags &
@@ -221,11 +239,15 @@ private:
 
     // truy van tat ca chuc nang toi vk1.3 vi mac dinh chi vk1.0
     vk::StructureChain<vk::PhysicalDeviceFeatures2,
+                       vk::PhysicalDeviceVulkan11Features,
                        vk::PhysicalDeviceVulkan13Features,
                        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
         featureChain = {
-            {},                         // vk::PhysicalDeviceFeatures2
-            {.dynamicRendering = true}, // vk::PhysicalDeviceVulkan13Features
+            {}, // vk::PhysicalDeviceFeatures2
+            {.shaderDrawParameters =
+                 true}, // vk::PhysicalDeviceVulkan11Features
+            {.synchronization2 = true,
+             .dynamicRendering = true}, // vk::PhysicalDeviceVulkan13Features
             {.extendedDynamicState =
                  true} // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
         };
@@ -283,6 +305,7 @@ private:
 
     swapChainImageFormat = swapChainSurfaceFormat.format;
   }
+
   static vk::SurfaceFormatKHR chooseSwapSurfaceFormat(
       const std::vector<vk::SurfaceFormatKHR> &availableFormats) {
     assert(!availableFormats.empty());
@@ -444,6 +467,112 @@ private:
     return buffer;
   }
 
+  void createCommandPool() {
+    vk::CommandPoolCreateInfo poolInfo{
+        .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+        .queueFamilyIndex = queueIndex};
+    commandPool = vk::raii::CommandPool(device, poolInfo);
+  }
+
+  void createCommandBuffer() {
+    vk::CommandBufferAllocateInfo allocInfo{
+        .commandPool = commandPool,
+        .level = vk::CommandBufferLevel::ePrimary,
+        .commandBufferCount = 1};
+
+    commandBuffer =
+        std::move(vk::raii::CommandBuffers(device, allocInfo).front());
+  }
+
+  void recordCommandBuffer(uint32_t imageIndex) {
+    commandBuffer.begin({});
+    // Before starting rendering, transition the swapchain image to
+    // COLOR_ATTACHMENT_OPTIMAL
+    transition_image_layout(
+        imageIndex, vk::ImageLayout::eUndefined,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        {}, // srcAccessMask (no need to wait for previous operations)
+        vk::AccessFlagBits2::eColorAttachmentWrite,         // dstAccessMask
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput, // srcStage
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput  // dstStage
+    );
+
+    vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
+    vk::RenderingAttachmentInfo attachmentInfo = {
+        .imageView = swapChainImageViews[imageIndex],
+        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        .storeOp = vk::AttachmentStoreOp::eStore,
+        .clearValue = clearColor};
+
+    vk::RenderingInfo renderingInfo = {
+        .renderArea = {.offset = {0, 0}, .extent = swapChainExtent},
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &attachmentInfo};
+
+    commandBuffer.beginRendering(renderingInfo);
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics,
+                               graphicsPipeline);
+    commandBuffer.setViewport(
+        0,
+        vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width),
+                     static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+    commandBuffer.setScissor(0,
+                             vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+
+    commandBuffer.draw(
+        3, 1, 0,
+        0); //(vertex count, instance count, first vertex, first instance)
+    commandBuffer.endRendering();
+    // After rendering, transition the swapchain image to PRESENT_SRC
+    transition_image_layout(
+        imageIndex, vk::ImageLayout::eColorAttachmentOptimal,
+        vk::ImageLayout::ePresentSrcKHR,
+        vk::AccessFlagBits2::eColorAttachmentWrite,         // srcAccessMask
+        {},                                                 // dstAccessMask
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput, // srcStage
+        vk::PipelineStageFlagBits2::eBottomOfPipe           // dstStage
+    );
+    commandBuffer.end();
+  }
+
+  void transition_image_layout(uint32_t imageIndex, vk::ImageLayout oldLayout,
+                               vk::ImageLayout newLayout,
+                               vk::AccessFlags2 srcAccessMask,
+                               vk::AccessFlags2 dstAccessMask,
+                               vk::PipelineStageFlags2 srcStageMask,
+                               vk::PipelineStageFlags2 dstStageMask) {
+    vk::ImageMemoryBarrier2 barrier = {
+        .srcStageMask = srcStageMask,
+        .srcAccessMask = srcAccessMask,
+        .dstStageMask = dstStageMask,
+        .dstAccessMask = dstAccessMask,
+        .oldLayout = oldLayout,
+        .newLayout = newLayout,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = swapChainImages[imageIndex],
+        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                             .baseMipLevel = 0,
+                             .levelCount = 1,
+                             .baseArrayLayer = 0,
+                             .layerCount = 1}};
+    vk::DependencyInfo dependencyInfo = {.dependencyFlags = {},
+                                         .imageMemoryBarrierCount = 1,
+                                         .pImageMemoryBarriers = &barrier};
+    commandBuffer.pipelineBarrier2(dependencyInfo);
+  }
+
+  void createSyncObjects() {
+    presentCompleteSemaphore =
+        vk::raii::Semaphore(device, vk::SemaphoreCreateInfo());
+    renderFinishedSemaphore =
+        vk::raii::Semaphore(device, vk::SemaphoreCreateInfo());
+    drawFence =
+        vk::raii::Fence(device, {.flags = vk::FenceCreateFlagBits::eSignaled});
+  }
+
   // tim queue family ho tro cac lenh do hoa
   // uint32_t findQueueFamilies(vk::raii::PhysicalDevice physicalDevice)
   // {
@@ -467,7 +596,47 @@ private:
   void mainLoop() {
     while (!glfwWindowShouldClose(window)) {
       glfwPollEvents();
+      drawFrame();
     }
+
+    device.waitIdle();
+  }
+
+  /**
+   *  step rendering common
+   * - doi khung truoc xong
+   * - lay anh tu swap chain
+   * - ghi lai 1 bo dem lenh de ve canh len
+   * - gui bo dem lenh da ghi
+   * - trinh chieu anh chuoi swapchain
+   */
+  void drawFrame() {
+    auto fenceResult = device.waitForFences(*drawFence, vk::True, UINT64_MAX);
+    auto [result, imageIndex] = swapChain.acquireNextImage(
+        UINT64_MAX, *presentCompleteSemaphore, nullptr);
+
+    recordCommandBuffer(imageIndex);
+    device.resetFences(*drawFence);
+
+    // gui bo dem lenh
+    vk::PipelineStageFlags waitDestinationStageMask(
+        vk::PipelineStageFlagBits::eColorAttachmentOutput);
+    const vk::SubmitInfo submitInfo{
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &*presentCompleteSemaphore,
+        .pWaitDstStageMask = &waitDestinationStageMask,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &*commandBuffer,
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &*renderFinishedSemaphore};
+    graphicsQueue.submit(submitInfo, *drawFence);
+    const vk::PresentInfoKHR presentInfoKHR{.waitSemaphoreCount = 1,
+                                            .pWaitSemaphores =
+                                                &*renderFinishedSemaphore,
+                                            .swapchainCount = 1,
+                                            .pSwapchains = &*swapChain,
+                                            .pImageIndices = &imageIndex};
+    result = graphicsQueue.presentKHR(presentInfoKHR);
   }
 
   void cleanup() {
