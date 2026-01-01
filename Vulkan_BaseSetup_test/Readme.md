@@ -22,7 +22,7 @@ note: using terminal "x64 Native Tools Command Prompt for VS 2022" window if use
    `cmake -G Ninja -B build -DCMAKE_TOOLCHAIN_FILE=C:/Users/ADMIN/Data/Lean/vcpkg/scripts/buildsystems/vcpkg.cmake`  
    `cmake -G "Visual Studio 17 2022" -B build-vs -DCMAKE_TOOLCHAIN_FILE=C:/Users/ADMIN/Data/Lean/vcpkg/scripts/buildsystems/vcpkg.cmake`
 
-- compiler shader:
+- (option) compiler shader:
   change path slang compiler if need
   win: `./compile.bat`
   linux:
