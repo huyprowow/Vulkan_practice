@@ -418,7 +418,8 @@ private:
     };
 
     graphicsPipeline = vk::raii::Pipeline(
-        device, nullptr, pipelineInfo); // tham so thu 2 la VK_NULL_HANDLE (dung de)
+        device, nullptr,
+        pipelineInfo); // tham so thu 2 la VK_NULL_HANDLE (dung de)
   }
 
   [[nodiscard]] vk::raii::ShaderModule
