@@ -82,7 +82,11 @@ private:
   std::vector<const char *> requiredDeviceExtension = {
       vk::KHRSwapchainExtensionName, vk::KHRSpirv14ExtensionName,
       vk::KHRSynchronization2ExtensionName,
-      vk::KHRCreateRenderpass2ExtensionName};
+      vk::KHRCreateRenderpass2ExtensionName
+#ifdef __APPLE__
+      , "VK_KHR_portability_subset"  // Required for MoltenVK devices
+#endif
+  };
   vk::raii::Device device =
       nullptr; // logical device tuong tac voi physical device
   uint32_t queueIndex = ~0;
@@ -93,7 +97,11 @@ private:
   std::vector<const char *> deviceExtensions = {
       vk::KHRSwapchainExtensionName, vk::KHRSpirv14ExtensionName,
       vk::KHRSynchronization2ExtensionName,
-      vk::KHRCreateRenderpass2ExtensionName};
+      vk::KHRCreateRenderpass2ExtensionName
+#ifdef __APPLE__
+      , "VK_KHR_portability_subset"  // Required for MoltenVK devices
+#endif
+  };
 
   vk::raii::SwapchainKHR swapChain = nullptr;
   vk::SurfaceFormatKHR swapChainSurfaceFormat;
@@ -1001,12 +1009,19 @@ private:
   }
 
   void createInstance() {
+    // Use Vulkan 1.3 for macOS (MoltenVK), 1.4 for Windows/Linux (native Vulkan)
+#ifdef __APPLE__
+    constexpr uint32_t vulkanApiVersion = vk::ApiVersion13;  // MoltenVK supports up to 1.3
+#else
+    constexpr uint32_t vulkanApiVersion = vk::ApiVersion14;  // Native Vulkan on Windows/Linux
+#endif
+
     constexpr vk::ApplicationInfo appInfo{
         .pApplicationName = "Hello Triangle",
         .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
         .pEngineName = "No Engine",
         .engineVersion = VK_MAKE_VERSION(1, 0, 0),
-        .apiVersion = vk::ApiVersion14};
+        .apiVersion = vulkanApiVersion};
 
     // get required layers
     std::vector<char const *> requiredLayers;
@@ -1050,6 +1065,11 @@ private:
             static_cast<uint32_t>(requiredExtensions.size()),
         .ppEnabledExtensionNames = requiredExtensions.data()};
 
+    // Enable portability enumeration for MoltenVK on macOS
+#ifdef __APPLE__
+    createInfo.flags |= vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
+#endif
+
     instance = vk::raii::Instance(context, createInfo);
   }
   void setupDebugMessenger() {
@@ -1078,6 +1098,13 @@ private:
         glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
     std::vector extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+    
+    // Add portability extensions for MoltenVK on macOS
+#ifdef __APPLE__
+    extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+    extensions.push_back("VK_KHR_get_physical_device_properties2");
+#endif
+    
     if (enableValidationLayers) {
       extensions.push_back(vk::EXTDebugUtilsExtensionName);
     }
