@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(Vukan_Learn)
+project(Vulkan_Learn)
 # specify the C++ standard
 #set(CMAKE_CXX_STANDARD 20)
 #set(CMAKE_CXX_STANDARD_REQUIRED True)   
@@ -85,7 +85,7 @@ endif()
 
 function (add_slang_shader_target TARGET)
   cmake_parse_arguments ("SHADER" "" "" "SOURCES" ${ARGN})
-  set (SHADERS_DIR ${CMAKE_CURRENT_LIST_DIR}/shaders)
+  set (SHADERS_DIR ${CMAKE_BINARY_DIR}/shaders)
   set (ENTRY_POINTS -entry vertMain -entry fragMain)
   add_custom_command (
           OUTPUT ${SHADERS_DIR}
@@ -137,11 +137,11 @@ function(add_to_build CPP_FILE)
 
   if (DEFINED ARG_MODELS)
     list(TRANSFORM ARG_MODELS PREPEND "${CMAKE_SOURCE_DIR}/assets/")
-    file (COPY ${ARG_MODELS} DESTINATION ${CMAKE_BINARY_DIR}/${PROJECT_NAME}/models)
+    file (COPY ${ARG_MODELS} DESTINATION ${CMAKE_BINARY_DIR}/models)
   endif ()
   if (DEFINED ARG_TEXTURES)
     list(TRANSFORM ARG_TEXTURES PREPEND "${CMAKE_SOURCE_DIR}/assets/")
-    file (COPY ${ARG_TEXTURES} DESTINATION ${CMAKE_BINARY_DIR}/${PROJECT_NAME}/textures)
+    file (COPY ${ARG_TEXTURES} DESTINATION ${CMAKE_BINARY_DIR}/textures)
   endif ()
 
 endfunction()
@@ -151,4 +151,5 @@ endfunction()
 add_to_build(main.cpp
 LIBS Vulkan::cppm glfw glm::glm
 SHADER shader
+TEXTURES textures/715403.png
 )

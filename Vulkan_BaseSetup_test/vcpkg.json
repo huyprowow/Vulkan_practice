@@ -2,6 +2,10 @@
   "dependencies": [
     "glm",
     "tinyobjloader",
-    "glfw3"
+    "glfw3",
+    "stb",
+    "tinygltf",
+    "nlohmann-json",
+    "ktx"
   ]
 }

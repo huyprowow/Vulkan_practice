@@ -5,6 +5,8 @@ out/
 bin/
 lib/
 
+shaders/slang.spv
+
 # CMake generated files
 CMakeCache.txt
 CMakeFiles/

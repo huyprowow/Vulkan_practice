@@ -1,6 +1,6 @@
 ## need:
 
-- install vcpkg, ninja, cmake, vulkan sdk lunar (1.4.321.1), MSCV (VS) or LLVM(21.1.4)/clang/gcc
+- install vcpkg, ninja, cmake, vulkan sdk lunar (1.4.321.1) (apple -> molten vulkan), MSCV (VS) or LLVM(21.1.4)/clang/gcc
 
 ### 1. build
 
@@ -33,5 +33,7 @@ note: using terminal "x64 Native Tools Command Prompt for VS 2022" window if use
   `cmake --build build`
 
 ### 2.run
-
-`.\build\Vukan_Learn.exe`
+go to build folder
+`cd build`
+then
+`.\Vukan_Learn.exe`
