@@ -6,7 +6,10 @@
 #include <map>
 #include <memory>
 #include <stdexcept>
+#include <unordered_map>
 #include <vector>
+
+using namespace std;
 
 // #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES // tu align memory cua uniform
 // shader
@@ -21,6 +24,8 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/hash.hpp>
 
 #include <chrono>
 
@@ -34,8 +39,13 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h>
+
 constexpr uint32_t WIDTH = 800;
 constexpr uint32_t HEIGHT = 600;
+const std::string MODEL_PATH = "models/viking_room.obj";
+const std::string TEXTURE_PATH = "textures/viking_room.png";
 
 const std::vector validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
@@ -66,20 +76,27 @@ struct Vertex {
             vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32Sfloat,
                                                 offsetof(Vertex, texCoord))};
   }
+
+  bool operator==(
+      const Vertex &other) const { // vi Vertex tu dinh nghia nen phai trien
+                                   // khai de dung voi unordered_map (lam key)
+    return pos == other.pos && color == other.color &&
+           texCoord == other.texCoord;
+  }
 };
 
-const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
-
-    {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}};
-
-const std::vector<uint16_t> indices = {0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4};
+namespace std {
+template <>
+struct hash<Vertex> { // vi Vertex tu dinh nghia nen phai trien khai de dung voi
+                      // unordered_map (lam key)
+  size_t operator()(Vertex const &vertex) const {
+    return ((hash<glm::vec3>()(vertex.pos) ^
+             (hash<glm::vec3>()(vertex.color) << 1)) >>
+            1) ^
+           (hash<glm::vec2>()(vertex.texCoord) << 1);
+  }
+};
+} // namespace std
 
 struct UniformBufferObject {
   alignas(16) glm::mat4 model;
@@ -146,6 +163,8 @@ private:
   std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
   std::vector<vk::raii::Fence> inFlightFences;
 
+  std::vector<Vertex> vertices;
+  std::vector<uint32_t> indices;
   vk::raii::Buffer vertexBuffer = nullptr;
   vk::raii::DeviceMemory vertexBufferMemory = nullptr;
   vk::raii::Buffer indexBuffer = nullptr;
@@ -212,9 +231,10 @@ private:
     createTextureSampler();   // tao sampler cho texture image (truy cap image
                               // thong qua sampler de ap dung cac phep bien doi
                               // (mipmap, filter,...))
-    createVertexBuffer();     // tao vertex buffer luu cac vertex data
-    createIndexBuffer(); // tao index buffer luu cac index data (tranh ve trung
-                         // dinh)
+    loadModel();
+    createVertexBuffer(); // tao vertex buffer luu cac vertex data
+    createIndexBuffer();  // tao index buffer luu cac index data (tranh ve trung
+                          // dinh)
     createUniformBuffers(); // uniform
     createDescriptorPool(); // tao descriptor pool luu cac descriptor set (1:n -
                             // pool:set)
@@ -703,7 +723,7 @@ private:
   void createTextureImage() {
     // load anh
     int texWidth, texHeight, texChannels;
-    stbi_uc *pixels = stbi_load("textures/715403.png", &texWidth, &texHeight,
+    stbi_uc *pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight,
                                 &texChannels, STBI_rgb_alpha);
     vk::DeviceSize imageSize = texWidth * texHeight * 4;
 
@@ -894,6 +914,53 @@ private:
     commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, {},
                                   nullptr, barrier);
     endSingleTimeCommands(commandBuffer);
+  }
+  void loadModel() {
+    tinyobj::attrib_t attrib; // contain position, normal, texture coordinate
+    std::vector<tinyobj::shape_t> shapes; // contain faces
+    std::vector<tinyobj::material_t> materials;
+    std::string warn, err;
+
+    std::unordered_map<Vertex, uint32_t>
+        uniqueVertices{}; // dung unordered_map de loai dinh trung lap -> truyen
+                          // zo index
+
+    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err,
+                          MODEL_PATH.c_str())) {
+      throw std::runtime_error(warn + err);
+    }
+
+    for (const auto &shape : shapes) {
+      for (const auto &index : shape.mesh.indices) {
+        Vertex vertex{};
+
+        // arr 1d, (3i + 0, 3i + 1, 3i + 2) -> (x, y, z)
+        vertex.pos = {attrib.vertices[3 * index.vertex_index + 0],
+                      attrib.vertices[3 * index.vertex_index + 1],
+                      attrib.vertices[3 * index.vertex_index + 2]};
+
+        // arr 1d, (2i + 0, 2i + 1) -> (u, v)
+        vertex.texCoord = {
+            attrib.texcoords[2 * index.texcoord_index + 0],
+            1.0f - attrib.texcoords[2 * index.texcoord_index +
+                                    1] // OBJ: toa do y 0 la day hinh anh nhung
+                                       // hien tai: tai anh len vk thi y 0 la
+                                       // dinh nen phai dao nguoc
+        };
+
+        vertex.color = {1.0f, 1.0f, 1.0f};
+
+        if (uniqueVertices.count(vertex) == 0) {
+          uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
+          vertices.push_back(vertex);
+        }
+
+        indices.push_back(uniqueVertices[vertex]);
+      }
+    }
+
+    cout << "Vertices: " << vertices.size() << endl;
+    cout << "Indices: " << indices.size() << endl;
   }
 
   void createVertexBuffer() {
@@ -1107,7 +1174,7 @@ private:
     commandBuffer.setScissor(0,
                              vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
     commandBuffer.bindVertexBuffers(0, *vertexBuffer, {0});
-    commandBuffer.bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint16);
+    commandBuffer.bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint32);
     commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
                                      pipelineLayout, 0,
                                      *descriptorSets[frameIndex], nullptr);

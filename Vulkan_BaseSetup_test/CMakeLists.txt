@@ -151,5 +151,6 @@ endfunction()
 add_to_build(main.cpp
 LIBS Vulkan::cppm glfw glm::glm
 SHADER shader
-TEXTURES textures/715403.png
+TEXTURES textures/viking_room.png
+MODELS models/viking_room.obj
 )
