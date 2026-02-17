@@ -71,7 +71,6 @@ vcpkg_manifest/
 
 # Object files
 *.o
-*.obj
 *.lo
 *.slo
 *.ko
