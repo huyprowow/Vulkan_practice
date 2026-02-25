@@ -181,6 +181,7 @@ private:
   uint32_t frameIndex = 0;
   bool framebufferResized = false;
 
+  uint32_t mipLevels;
   vk::raii::Image textureImage = nullptr;
   vk::raii::DeviceMemory textureImageMemory = nullptr;
   vk::raii::ImageView textureImageView = nullptr;
@@ -506,7 +507,7 @@ private:
 
     for (auto image : swapChainImages) {
       swapChainImageViews.emplace_back(createImageView(
-          image, swapChainImageFormat, vk::ImageAspectFlagBits::eColor));
+          image, swapChainImageFormat, vk::ImageAspectFlagBits::eColor, 1));
     }
   }
 
@@ -655,14 +656,15 @@ private:
     commandPool = vk::raii::CommandPool(device, poolInfo);
   }
 
-  void createImage(uint32_t width, uint32_t height, vk::Format format,
-                   vk::ImageTiling tiling, vk::ImageUsageFlags usage,
+  void createImage(uint32_t width, uint32_t height, uint32_t mipLevels,
+                   vk::Format format, vk::ImageTiling tiling,
+                   vk::ImageUsageFlags usage,
                    vk::MemoryPropertyFlags properties, vk::raii::Image &image,
                    vk::raii::DeviceMemory &imageMemory) {
     vk::ImageCreateInfo imageInfo{.imageType = vk::ImageType::e2D,
                                   .format = format,
                                   .extent = {width, height, 1},
-                                  .mipLevels = 1,
+                                  .mipLevels = mipLevels,
                                   .arrayLayers = 1,
                                   .samples = vk::SampleCountFlagBits::e1,
                                   .tiling = tiling,
@@ -682,13 +684,13 @@ private:
 
   void createDepthResources() {
     vk::Format depthFormat = findDepthFormat();
-    createImage(swapChainExtent.width, swapChainExtent.height, depthFormat,
+    createImage(swapChainExtent.width, swapChainExtent.height, 1, depthFormat,
                 vk::ImageTiling::eOptimal,
                 vk::ImageUsageFlagBits::eDepthStencilAttachment,
                 vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage,
                 depthImageMemory);
     depthImageView = createImageView(depthImage, depthFormat,
-                                     vk::ImageAspectFlagBits::eDepth);
+                                     vk::ImageAspectFlagBits::eDepth, 1);
   }
   vk::Format findSupportedFormat(const std::vector<vk::Format> &candidates,
                                  vk::ImageTiling tiling,
@@ -726,6 +728,9 @@ private:
     stbi_uc *pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight,
                                 &texChannels, STBI_rgb_alpha);
     vk::DeviceSize imageSize = texWidth * texHeight * 4;
+    mipLevels = static_cast<uint32_t>(
+                    std::floor(std::log2(std::max(texWidth, texHeight)))) +
+                1;
 
     if (!pixels) {
       throw std::runtime_error("failed to load texture image!");
@@ -744,9 +749,10 @@ private:
 
     vk::raii::Image textureImageTemp({});
     vk::raii::DeviceMemory textureImageMemoryTemp({});
-    createImage(texWidth, texHeight, vk::Format::eR8G8B8A8Srgb,
+    createImage(texWidth, texHeight, mipLevels, vk::Format::eR8G8B8A8Srgb,
                 vk::ImageTiling::eOptimal,
-                vk::ImageUsageFlagBits::eTransferDst |
+                vk::ImageUsageFlagBits::eTransferSrc |
+                    vk::ImageUsageFlagBits::eTransferDst |
                     vk::ImageUsageFlagBits::eSampled,
                 vk::MemoryPropertyFlagBits::eDeviceLocal, textureImageTemp,
                 textureImageMemoryTemp);
@@ -754,59 +760,178 @@ private:
     textureImage = std::move(textureImageTemp);
     textureImageMemory = std::move(textureImageMemoryTemp);
 
-    transitionImageLayout(
-        textureImage, vk::ImageLayout::eUndefined,
-        vk::ImageLayout::eTransferDstOptimal); // chuyen layout toi uu nhan dl
-                                               // (ghi)
+    transitionImageLayout(textureImage, vk::ImageLayout::eUndefined,
+                          vk::ImageLayout::eTransferDstOptimal,
+                          mipLevels); // chuyen layout toi uu nhan dl
+                                      // (ghi)
     copyBufferToImage(stagingBuffer, textureImage,
                       static_cast<uint32_t>(texWidth),
                       static_cast<uint32_t>(texHeight));
-    transitionImageLayout(
-        textureImage, vk::ImageLayout::eTransferDstOptimal,
-        vk::ImageLayout::eShaderReadOnlyOptimal); // chuyen layout toi uu cho
-                                                  // shader doc
+    // transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while generating
+    // mipmaps
+    // note: thuc te nen tao mipmap truoc roi load vao chu k tao khi chay
+    generateMipmaps(textureImage, vk::Format::eR8G8B8A8Srgb, texWidth,
+                    texHeight, mipLevels);
+  }
+
+  void generateMipmaps(vk::raii::Image &image, vk::Format imageFormat,
+                       int32_t texWidth, int32_t texHeight,
+                       uint32_t mipLevels) {
+    // goi vkCmdBlitImage nhieu lan de sao chep du lieu vao tung cap do
+    // cua texture mipmap (dung nhu LOD) nhung k dam bao tat ca nen tang (yeu
+    // cau phai ho tro loc tuyen tinh)
+
+    // Check if image format supports linear blit-ing
+    vk::FormatProperties formatProperties =
+        physicalDevice.getFormatProperties(imageFormat);
+
+    if (!(formatProperties.optimalTilingFeatures &
+          vk::FormatFeatureFlagBits::eSampledImageFilterLinear)) {
+      throw std::runtime_error(
+          "texture image format does not support linear blitting!");
+    }
+    vk::raii::CommandBuffer commandBuffer =
+        beginSingleTimeCommands();
+
+    vk::ImageMemoryBarrier barrier = {
+        .srcAccessMask = vk::AccessFlagBits::eTransferWrite,
+        .dstAccessMask = vk::AccessFlagBits::eTransferRead,
+        .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+        .newLayout = vk::ImageLayout::eTransferSrcOptimal,
+        .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+        .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+        .image = image};
+    barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.subresourceRange.levelCount = 1;
+
+    // tao mip map, chuyen doi layout moi level (chuyen lai layout toi uu cho
+    // shader doc hoac layout de sao chep), chia doi kich thuoc mip map
+    int32_t mipWidth = texWidth;
+    int32_t mipHeight = texHeight;
+
+    for (uint32_t i = 1; i < mipLevels; i++) {
+      // chuyen doi i - 1 sang VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+      barrier.subresourceRange.baseMipLevel = i - 1;
+      barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+      barrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+      barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+      barrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+
+      commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                                     vk::PipelineStageFlagBits::eTransfer, {},
+                                     {}, {}, barrier);
+
+      // chi dinh vung duoc sd trong thao tac sao chep (blit) (xac dinh kich
+      // thuoc region blit)
+      vk::ArrayWrapper1D<vk::Offset3D, 2> offsets, dstOffsets;
+      offsets[0] = vk::Offset3D(0, 0, 0);
+      offsets[1] = vk::Offset3D(mipWidth, mipHeight, 1);
+      dstOffsets[0] = vk::Offset3D(0, 0, 0);
+      dstOffsets[1] = vk::Offset3D(mipWidth > 1 ? mipWidth / 2 : 1,
+                                   mipHeight > 1 ? mipHeight / 2 : 1, 1);
+      vk::ImageBlit blit = {.srcSubresource = {},
+                            .srcOffsets = offsets,
+                            .dstSubresource = {},
+                            .dstOffsets = dstOffsets};
+      blit.srcSubresource = vk::ImageSubresourceLayers(
+          vk::ImageAspectFlagBits::eColor, i - 1, 0, 1);
+      blit.dstSubresource =
+          vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, i, 0, 1);
+      // ghi lenh len command buffer
+      commandBuffer.blitImage(image, vk::ImageLayout::eTransferSrcOptimal,
+                               image, vk::ImageLayout::eTransferDstOptimal,
+                               {blit}, vk::Filter::eLinear);
+
+      // chuyen doi muc mip i - 1 sang VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+      barrier.oldLayout = vk::ImageLayout::eTransferSrcOptimal;
+      barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+      barrier.srcAccessMask = vk::AccessFlagBits::eTransferRead;
+      barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+      commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                                     vk::PipelineStageFlagBits::eFragmentShader,
+                                     {}, {}, {}, barrier);
+
+      // chia doi kich thuoc mip map hien tai, kiem tra kich thuoc khac 0 (k
+      // phai hinh vuong)
+      if (mipWidth > 1)
+        mipWidth /= 2;
+      if (mipHeight > 1)
+        mipHeight /= 2;
+    }
+
+    // chuyen mip cuoi cung tu VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ->
+    // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+    barrier.subresourceRange.baseMipLevel = mipLevels - 1;
+    barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+    barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+    barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                                   vk::PipelineStageFlagBits::eFragmentShader,
+                                   {}, {}, {}, barrier);
+
+    endSingleTimeCommands(commandBuffer);
   }
   vk::raii::ImageView createImageView(const vk::Image &image, vk::Format format,
-                                      vk::ImageAspectFlags aspectFlags) {
+                                      vk::ImageAspectFlags aspectFlags,
+                                      uint32_t mipLevels) {
     vk::ImageViewCreateInfo viewInfo{
         .image = image,
         .viewType = vk::ImageViewType::e2D,
         .format = format,
-        .subresourceRange = {aspectFlags, 0, 1, 0, 1}};
+        .subresourceRange = {aspectFlags, 0,
+                             mipLevels, // levelCount
+                             0, 1}};
     return vk::raii::ImageView(device, viewInfo);
   }
   // Overload for RAII images
   // de su dung cho texture image no dung vk::raii::Image nen phai nap chong
   vk::raii::ImageView createImageView(const vk::raii::Image &image,
                                       vk::Format format,
-                                      vk::ImageAspectFlags aspectFlags) {
-    return createImageView(*image, format,
-                           aspectFlags); // Dereference to get raw handle
+                                      vk::ImageAspectFlags aspectFlags,
+                                      uint32_t mipLevels) {
+    return createImageView(*image, format, aspectFlags,
+                           mipLevels); // Dereference to get raw handle
   }
 
   void createTextureImageView() {
-    textureImageView = createImageView(textureImage, vk::Format::eR8G8B8A8Srgb,
-                                       vk::ImageAspectFlagBits::eColor);
+    textureImageView =
+        createImageView(textureImage, vk::Format::eR8G8B8A8Srgb,
+                        vk::ImageAspectFlagBits::eColor, mipLevels);
   }
 
   void createTextureSampler() {
+    // sampler kiem soat dl doc, muc mipmap, filer,...
     vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
     vk::SamplerCreateInfo samplerInfo{
-        .magFilter = vk::Filter::eLinear,
-        .minFilter = vk::Filter::eLinear,
-        .mipmapMode = vk::SamplerMipmapMode::eLinear,
+        .magFilter = vk::Filter::eLinear, // gan camera dung cai nay
+        .minFilter = vk::Filter::eLinear, // xa camera dung cai nay
+        .mipmapMode =
+            vk::SamplerMipmapMode::eLinear, // linear select 2mip interpolation
+                                            // between mipmaps, nearest lod
+                                            // selection mip
         .addressModeU = vk::SamplerAddressMode::eRepeat,
         .addressModeV = vk::SamplerAddressMode::eRepeat,
         .addressModeW = vk::SamplerAddressMode::eRepeat,
+        .mipLodBias =
+            0.0f, // lod khong am, va chi bang 0 khi o gan camera.
+                  // mipLodBias cho phep buoc Vulkan su dung gia tri
+                  // thap hon lod va level so voi gia tri ma no thuong su dung
         .anisotropyEnable = vk::True,
         .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
         .compareEnable = vk::False,
-        .compareOp = vk::CompareOp::eAlways};
+        .compareOp = vk::CompareOp::eAlways,
+        .minLod = 0.0f,            // dat muc mipmap thap nhat
+        .maxLod = vk::LodClampNone // khong gioi han muc mipmap dam bao toan bo
+                                   // pv mip dc dung
+    };
     samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
     samplerInfo.unnormalizedCoordinates = vk::False;
-    samplerInfo.mipLodBias = 0.0f;
-    samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = 0.0f;
+    //samplerInfo.minLod = static_cast<float>(mipLevels / 2); //test mip
 
     textureSampler = vk::raii::Sampler(device, samplerInfo);
   }
@@ -879,7 +1004,7 @@ private:
 
   void transitionImageLayout(const vk::raii::Image &image,
                              vk::ImageLayout oldLayout,
-                             vk::ImageLayout newLayout) {
+                             vk::ImageLayout newLayout, uint32_t mipLevels) {
     // vk cho phep chuyen doi bo cuc toi uu cho tung nhiem vu
     auto commandBuffer = beginSingleTimeCommands();
 
@@ -887,7 +1012,9 @@ private:
         .oldLayout = oldLayout,
         .newLayout = newLayout,
         .image = image,
-        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0,
+                             mipLevels, // levelCount
+                             0, 1}};
     // 0 xd -> transfer dist: thao tac ghi k can cho
     // transfer dist -> shader read: doc shader can cho ghi dl transfer xong
     vk::PipelineStageFlags sourceStage;
@@ -1128,7 +1255,7 @@ private:
         vk::AccessFlagBits2::eColorAttachmentWrite,         // dstAccessMask
         vk::PipelineStageFlagBits2::eColorAttachmentOutput, // srcStage
         vk::PipelineStageFlagBits2::eColorAttachmentOutput, // dstStage
-        vk::ImageAspectFlagBits::eColor);
+        vk::ImageAspectFlagBits::eColor, 1);
     // transition for the depth image
     transition_image_layout(*depthImage, vk::ImageLayout::eUndefined,
                             vk::ImageLayout::eDepthAttachmentOptimal,
@@ -1138,7 +1265,7 @@ private:
                                 vk::PipelineStageFlagBits2::eLateFragmentTests,
                             vk::PipelineStageFlagBits2::eEarlyFragmentTests |
                                 vk::PipelineStageFlagBits2::eLateFragmentTests,
-                            vk::ImageAspectFlagBits::eDepth);
+                            vk::ImageAspectFlagBits::eDepth, 1);
     vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
     vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
     vk::RenderingAttachmentInfo attachmentInfo = {
@@ -1191,7 +1318,7 @@ private:
         {},                                                 // dstAccessMask
         vk::PipelineStageFlagBits2::eColorAttachmentOutput, // srcStage
         vk::PipelineStageFlagBits2::eBottomOfPipe,          // dstStage
-        vk::ImageAspectFlagBits::eColor);
+        vk::ImageAspectFlagBits::eColor, 1);
     commandBuffer.end();
   }
 
@@ -1201,7 +1328,8 @@ private:
                                vk::AccessFlags2 dstAccessMask,
                                vk::PipelineStageFlags2 srcStageMask,
                                vk::PipelineStageFlags2 dstStageMask,
-                               vk::ImageAspectFlags image_aspect_flags) {
+                               vk::ImageAspectFlags image_aspect_flags,
+                               uint32_t mipLevels) {
     vk::ImageMemoryBarrier2 barrier = {
         .srcStageMask = srcStageMask,
         .srcAccessMask = srcAccessMask,
@@ -1214,7 +1342,7 @@ private:
         .image = image,
         .subresourceRange = {.aspectMask = image_aspect_flags,
                              .baseMipLevel = 0,
-                             .levelCount = 1,
+                             .levelCount = mipLevels,
                              .baseArrayLayer = 0,
                              .layerCount = 1}};
     vk::DependencyInfo dependencyInfo = {.dependencyFlags = {},
