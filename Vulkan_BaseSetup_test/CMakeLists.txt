@@ -15,10 +15,10 @@ if(ENABLE_CPP20_MODULE)
   set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 endif()
 
-find_package (glfw3 REQUIRED)
-find_package (glm REQUIRED)
-find_package (tinyobjloader REQUIRED)
-find_package (Vulkan REQUIRED)
+find_package(glfw3 REQUIRED)
+find_package(glm REQUIRED)
+find_package(tinyobjloader REQUIRED)
+find_package(Vulkan REQUIRED)
 
 #slang
 # add_executable (glslang::validator IMPORTED)
@@ -33,15 +33,15 @@ if(ENABLE_CPP20_MODULE)
   add_library(Vulkan::cppm ALIAS VulkanCppModule)
 
   target_compile_definitions(VulkanCppModule
-          PUBLIC VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1 VULKAN_HPP_NO_STRUCT_CONSTRUCTORS=1
+    PUBLIC VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1 VULKAN_HPP_NO_STRUCT_CONSTRUCTORS=1
   )
   target_include_directories(VulkanCppModule
-          PUBLIC
-          "${Vulkan_INCLUDE_DIR}"
+    PUBLIC
+    "${Vulkan_INCLUDE_DIR}"
   )
   target_link_libraries(VulkanCppModule
-          PUBLIC
-          Vulkan::Vulkan
+    PUBLIC
+    Vulkan::Vulkan
   )
 
   set_target_properties(VulkanCppModule PROPERTIES CXX_STANDARD 20)
@@ -49,29 +49,29 @@ if(ENABLE_CPP20_MODULE)
   # Add MSVC-specific compiler options for proper C++ module support
   if(MSVC)
     target_compile_options(VulkanCppModule PRIVATE
-      /std:c++latest      # Use latest C++ standard for better module support
-      /permissive-        # Standards conformance mode
-      /Zc:__cplusplus     # Enable correct __cplusplus macro
-      /EHsc               # Enable C++ exception handling
-      /Zc:preprocessor    # Use conforming preprocessor
-      /translateInclude   # Automatically translate #include to import for standard library
+      /std:c++latest # Use latest C++ standard for better module support
+      /permissive- # Standards conformance mode
+      /Zc:__cplusplus # Enable correct __cplusplus macro
+      /EHsc # Enable C++ exception handling
+      /Zc:preprocessor # Use conforming preprocessor
+      /translateInclude # Automatically translate #include to import for standard library
     )
   endif()
 
   target_sources(VulkanCppModule
-          PUBLIC
-          FILE_SET cxx_modules TYPE CXX_MODULES
-          BASE_DIRS
-          "${Vulkan_INCLUDE_DIR}"
-          FILES
-          "${Vulkan_INCLUDE_DIR}/vulkan/vulkan.cppm"
+    PUBLIC
+    FILE_SET cxx_modules TYPE CXX_MODULES
+    BASE_DIRS
+    "${Vulkan_INCLUDE_DIR}"
+    FILES
+    "${Vulkan_INCLUDE_DIR}/vulkan/vulkan.cppm"
   )
 
 
   # Add the vulkan.cppm file directly as a source file
   target_sources(VulkanCppModule
-          PRIVATE
-          "${Vulkan_INCLUDE_DIR}/vulkan/vulkan.cppm"
+    PRIVATE
+    "${Vulkan_INCLUDE_DIR}/vulkan/vulkan.cppm"
   )
 else()
   # Create a dummy interface library when C++ 20 module is disabled
@@ -79,35 +79,44 @@ else()
   add_library(Vulkan::cppm ALIAS VulkanCppModule)
   target_link_libraries(VulkanCppModule INTERFACE Vulkan::Vulkan)
   target_compile_definitions(VulkanCppModule
-          INTERFACE VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1 VULKAN_HPP_NO_STRUCT_CONSTRUCTORS=1
+    INTERFACE VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1 VULKAN_HPP_NO_STRUCT_CONSTRUCTORS=1
   )
 endif()
 
-function (add_slang_shader_target TARGET)
-  cmake_parse_arguments ("SHADER" "" "" "SOURCES" ${ARGN})
-  set (SHADERS_DIR ${CMAKE_BINARY_DIR}/shaders)
-  set (ENTRY_POINTS -entry vertMain -entry fragMain)
-  add_custom_command (
-          OUTPUT ${SHADERS_DIR}
-          COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DIR}
+function(add_slang_shader_target TARGET)
+  cmake_parse_arguments("SHADER" "" "" "SOURCES" ${ARGN})
+  set(SHADERS_DIR ${CMAKE_BINARY_DIR}/shaders)
+  set(ENTRY_POINTS -entry vertMain -entry fragMain)
+  add_custom_command(
+    OUTPUT ${SHADERS_DIR}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DIR}
   )
-  add_custom_command (
-          OUTPUT  ${SHADERS_DIR}/slang.spv
-          COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCES} -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name ${ENTRY_POINTS} -o slang.spv
-          WORKING_DIRECTORY ${SHADERS_DIR}
-          DEPENDS ${SHADERS_DIR} ${SHADER_SOURCES}
-          COMMENT "Compiling Slang Shaders"
-          VERBATIM
+  add_custom_command(
+    OUTPUT ${SHADERS_DIR}/slang.spv
+    COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCES} -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name ${ENTRY_POINTS} -o slang.spv
+    WORKING_DIRECTORY ${SHADERS_DIR}
+    DEPENDS ${SHADERS_DIR} ${SHADER_SOURCES}
+    COMMENT "Compiling Slang Shaders"
+    VERBATIM
   )
-  add_custom_target (${TARGET}_shader DEPENDS ${SHADERS_DIR}/slang.spv)
+  add_custom_target(${TARGET}_shader DEPENDS ${SHADERS_DIR}/slang.spv)
 endfunction()
 
 function(add_to_build CPP_FILE)
-  cmake_parse_arguments (ARG
-        "" "SHADER" "LIBS;TEXTURES;MODELS" ${ARGN})
+  cmake_parse_arguments(ARG
+    "" "SHADER" "LIBS;TEXTURES;MODELS" ${ARGN})
 
   add_executable(${PROJECT_NAME} ${CPP_FILE})
-  set_target_properties (${PROJECT_NAME} PROPERTIES CXX_STANDARD 20)
+  set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 20)
+  # add files to compile
+  target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_sources(${PROJECT_NAME} PRIVATE
+    src/platform/Window.cpp
+    src/render/vulkan/Instance.cpp 
+    src/render/vulkan/Device.cpp
+    src/render/vulkan/Swapchain.cpp
+    src/render/vulkan/Renderer.cpp
+  )
 
   # Add compile definition if C++ 20 module is enabled
   if(ENABLE_CPP20_MODULE)
@@ -120,12 +129,12 @@ function(add_to_build CPP_FILE)
     endif()
   endif()
 
-# process arguments passing to function
-  if (DEFINED ARG_LIBS)
+  # process arguments passing to function
+  if(DEFINED ARG_LIBS)
     target_link_libraries(${PROJECT_NAME} ${ARG_LIBS})
-  endif ()
+  endif()
 
-  if (DEFINED ARG_SHADER)
+  if(DEFINED ARG_SHADER)
     file(GLOB SHADER_SLANG_SOURCES ${CMAKE_CURRENT_LIST_DIR}/shaders/${ARG_SHADER}.slang)
     if(SHADER_SLANG_SOURCES)
       add_slang_shader_target(${PROJECT_NAME} SOURCES ${SHADER_SLANG_SOURCES})
@@ -133,24 +142,24 @@ function(add_to_build CPP_FILE)
     else()
       message(WARNING "Shader file not found: ${CMAKE_CURRENT_LIST_DIR}/shaders/${ARG_SHADER}.slang")
     endif()
-  endif ()
+  endif()
 
-  if (DEFINED ARG_MODELS)
+  if(DEFINED ARG_MODELS)
     list(TRANSFORM ARG_MODELS PREPEND "${CMAKE_SOURCE_DIR}/assets/")
-    file (COPY ${ARG_MODELS} DESTINATION ${CMAKE_BINARY_DIR}/models)
-  endif ()
-  if (DEFINED ARG_TEXTURES)
+    file(COPY ${ARG_MODELS} DESTINATION ${CMAKE_BINARY_DIR}/models)
+  endif()
+  if(DEFINED ARG_TEXTURES)
     list(TRANSFORM ARG_TEXTURES PREPEND "${CMAKE_SOURCE_DIR}/assets/")
-    file (COPY ${ARG_TEXTURES} DESTINATION ${CMAKE_BINARY_DIR}/textures)
-  endif ()
+    file(COPY ${ARG_TEXTURES} DESTINATION ${CMAKE_BINARY_DIR}/textures)
+  endif()
 
 endfunction()
 
 
 
 add_to_build(main.cpp
-LIBS Vulkan::cppm glfw glm::glm
-SHADER shader
-TEXTURES textures/viking_room.png
-MODELS models/viking_room.obj
+  LIBS Vulkan::cppm glfw glm::glm
+  SHADER shader
+  TEXTURES textures/viking_room.png
+  MODELS models/viking_room.obj
 )
