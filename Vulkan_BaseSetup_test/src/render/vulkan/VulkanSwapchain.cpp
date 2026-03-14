@@ -1,15 +1,16 @@
-#include "Swapchain.hpp"
+#include "VulkanSwapchain.hpp"
 #include "../../platform/Window.hpp"
-#include "src/render/vulkan/Device.hpp"
+#include "VulkanDevice.hpp"
 
 #include <cassert>
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
-void Swapchain::init(const vk::raii::PhysicalDevice &physicalDevice,
-                     const Device &device, const vk::raii::SurfaceKHR &surface,
+void VulkanSwapchain::init(const vk::raii::PhysicalDevice &physicalDevice,
+                     const VulkanDevice &device, const vk::raii::SurfaceKHR &surface,
                      const Window &window) {
+  surface_ = &surface;
   createSwapChain(physicalDevice, device, surface,
                   window); // tao swap chain, la mot chuoi cac image de hien thi
                            // len man hinh
@@ -17,22 +18,24 @@ void Swapchain::init(const vk::raii::PhysicalDevice &physicalDevice,
                             // chain de xem
 }
 
-void Swapchain::recreate(const vk::raii::PhysicalDevice &physicalDevice,
-                         const Device &device,
+void VulkanSwapchain::recreate(const vk::raii::PhysicalDevice &physicalDevice,
+                         const VulkanDevice &device,
                          const vk::raii::SurfaceKHR &surface,
                          const Window &window) {
+  surface_ = &surface;
   cleanup();
   createSwapChain(physicalDevice, device, surface, window);
   createImageViews(device);
 }
 
-void Swapchain::cleanup() {
+void VulkanSwapchain::cleanup() {
   swapChainImageViews_.clear();
   swapChain_ = nullptr;
+  surface_ = nullptr;
 }
 
-void Swapchain::createSwapChain(const vk::raii::PhysicalDevice &physicalDevice,
-                                const Device &device,
+void VulkanSwapchain::createSwapChain(const vk::raii::PhysicalDevice &physicalDevice,
+                                const VulkanDevice &device,
                                 const vk::raii::SurfaceKHR &surface,
                                 const Window &window) {
   auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
@@ -68,7 +71,7 @@ void Swapchain::createSwapChain(const vk::raii::PhysicalDevice &physicalDevice,
   swapChainImageFormat_ = swapChainSurfaceFormat_.format;
 }
 
-vk::SurfaceFormatKHR Swapchain::chooseSwapSurfaceFormat(
+vk::SurfaceFormatKHR VulkanSwapchain::chooseSwapSurfaceFormat(
     const std::vector<vk::SurfaceFormatKHR> &availableFormats) {
   assert(!availableFormats.empty());
   const auto formatIt =
@@ -80,7 +83,7 @@ vk::SurfaceFormatKHR Swapchain::chooseSwapSurfaceFormat(
 }
 
 vk::Extent2D
-Swapchain::chooseSwapExtent(const vk::SurfaceCapabilitiesKHR &capabilities,
+VulkanSwapchain::chooseSwapExtent(const vk::SurfaceCapabilitiesKHR &capabilities,
                             const Window &window) const {
   if (capabilities.currentExtent.width != 0xFFFFFFFF) {
     return capabilities.currentExtent;
@@ -95,7 +98,7 @@ Swapchain::chooseSwapExtent(const vk::SurfaceCapabilitiesKHR &capabilities,
                                capabilities.maxImageExtent.height)};
 }
 
-vk::PresentModeKHR Swapchain::chooseSwapPresentMode(
+vk::PresentModeKHR VulkanSwapchain::chooseSwapPresentMode(
     const std::vector<vk::PresentModeKHR> &availablePresentModes) {
   assert(std::ranges::any_of(availablePresentModes, [](auto presentMode) {
     return presentMode == vk::PresentModeKHR::eFifo;
@@ -108,7 +111,7 @@ vk::PresentModeKHR Swapchain::chooseSwapPresentMode(
              : vk::PresentModeKHR::eFifo;
 }
 
-void Swapchain::createImageViews(const Device &device) {
+void VulkanSwapchain::createImageViews(const VulkanDevice &device) {
   swapChainImageViews_.clear();
   swapChainImageViews_.reserve(swapChainImages_.size());
 
@@ -120,7 +123,7 @@ void Swapchain::createImageViews(const Device &device) {
 }
 
 vk::raii::ImageView
-Swapchain::createImageView(const vk::Image &image, vk::Format format,
+VulkanSwapchain::createImageView(const vk::Image &image, vk::Format format,
                            vk::ImageAspectFlags aspectFlags, uint32_t mipLevels,
                            const vk::raii::Device &device) const {
   vk::ImageViewCreateInfo viewInfo{.image = image,

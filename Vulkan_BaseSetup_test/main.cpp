@@ -34,18 +34,21 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include "src/core/IRender.hpp"
+#include "src/core/Types.hpp"
 #include "src/platform/Window.hpp"
-#include "src/render/Types.hpp"
-#include "src/render/vulkan/Device.hpp"
-#include "src/render/vulkan/Instance.hpp"
-#include "src/render/vulkan/Renderer.hpp"
-#include "src/render/vulkan/Swapchain.hpp"
 
+#include "src/render/vulkan/VulkanDevice.hpp"
+#include "src/render/vulkan/VulkanInstance.hpp"
+#include "src/render/vulkan/VulkanRenderer.hpp"
+#include "src/render/vulkan/VulkanSwapchain.hpp"
+
+enum class Backend { Vulkan, DX12, WebGPU };
 
 class HelloTriangleApplication {
 public:
   void run() {
-    initVulkan();
+    initGraphics();
     mainLoop();
     cleanup();
   }
@@ -53,30 +56,48 @@ public:
 private:
   Window window_{WIDTH, HEIGHT, "Vulkan"};
   VulkanInstance vulkanInstance_;
-  Device device_;
-  Swapchain swapchain_;
-  Renderer renderer_;
+  VulkanDevice device_;
+  VulkanSwapchain swapchain_;
+  std::unique_ptr<IRenderer> renderer_;
 
-  void initVulkan() {
-    vulkanInstance_.init(window_);
-    device_.init(vulkanInstance_.getInstance(), vulkanInstance_.getSurface());
-    swapchain_.init(device_.getPhysicalDevice(), device_,
-                    vulkanInstance_.getSurface(), window_);
-    renderer_.init(device_, swapchain_, window_, vulkanInstance_.getSurface());
+  Backend chooseBackend() {
+    // read config from any where, now hard code vk
+    return Backend::Vulkan;
   }
 
+  void initGraphics() {
+    Backend backend = chooseBackend();
+
+    switch (backend) {
+    case Backend::Vulkan: {
+      // vkInstance, device, swapchain, renderer
+      vulkanInstance_.init(window_);
+      device_.init(vulkanInstance_.getInstance(), vulkanInstance_.getSurface());
+      swapchain_.init(device_.getPhysicalDevice(), device_,
+                      vulkanInstance_.getSurface(), window_);
+      auto vkRenderer = std::make_unique<VulkanRenderer>(); // vk backend
+      vkRenderer->init(device_, swapchain_, window_);
+      renderer_ = std::move(vkRenderer);
+      break;
+    }
+    case Backend::DX12:
+      break;
+    case Backend::WebGPU:
+      break;
+    }
+  }
 
   void mainLoop() {
     while (!window_.shouldClose()) {
       window_.pollEvents();
-      renderer_.drawFrame();
+      renderer_->drawFrame();
     }
 
     device_.getDevice().waitIdle();
   }
 
   void cleanup() {
-    renderer_.cleanup();
+    renderer_->cleanup();
     swapchain_.cleanup();
   }
 };

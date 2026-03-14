@@ -1,10 +1,10 @@
-#include "Device.hpp"
-#include "../../render/Types.hpp"
+#include "VulkanDevice.hpp"
+#include "../../core/Types.hpp"
 
 #include <cstring>
 #include <ranges>
 
-void Device::init(const vk::raii::Instance &instance,
+void VulkanDevice::init(const vk::raii::Instance &instance,
                   const vk::raii::SurfaceKHR &surface) {
   // danh sách extension
   requiredDeviceExtension_ = {
@@ -21,7 +21,7 @@ void Device::init(const vk::raii::Instance &instance,
   createLogicalDevice(surface); // tao logical device tu physical device
 }
 
-void Device::pickPhysicalDevice(const vk::raii::Instance &instance,
+void VulkanDevice::pickPhysicalDevice(const vk::raii::Instance &instance,
                                 const vk::raii::SurfaceKHR &surface) {
   auto devices = instance.enumeratePhysicalDevices();
   if (devices.empty()) {
@@ -130,7 +130,7 @@ void Device::pickPhysicalDevice(const vk::raii::Instance &instance,
   }
 }
 
-void Device::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
+void VulkanDevice::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
   // note: Các trình điều khiển hiện có chỉ cho phép bạn tạo một số lượng nhỏ
   // hàng đợi cho mỗi họ hàng đợi, không cần nhiều hơn vì có thể tạo tất cả
   // các bộ đệm lệnh trên nhiều luồng, sau đó gửi tất cả chúng cùng một lúc
@@ -172,7 +172,7 @@ void Device::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
                true} // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
       };
 
-  // create a Device
+  // create a VulkanDevice
   float queuePriority = 0.0f;
   vk::DeviceQueueCreateInfo deviceQueueCreateInfo{
       .queueFamilyIndex = queueIndex_,
@@ -192,7 +192,7 @@ void Device::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
 }
 
 // tim queue family ho tro cac lenh do hoa
-// uint32_t Device::findQueueFamilies() const
+// uint32_t VulkanDevice::findQueueFamilies() const
 // {
 //     // find the index of the first queue family that supports graphics
 //     std::vector<vk::QueueFamilyProperties> queueFamilyProperties =

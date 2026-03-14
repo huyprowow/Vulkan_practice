@@ -1,6 +1,6 @@
-#include "Instance.hpp"
+#include "VulkanInstance.hpp"
 #include "../../platform/Window.hpp"
-#include "../../render/Types.hpp"
+#include "../../core/Types.hpp"
 
 #include <cstring>
 #include <iostream>

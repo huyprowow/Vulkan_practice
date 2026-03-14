@@ -112,10 +112,10 @@ function(add_to_build CPP_FILE)
   target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_sources(${PROJECT_NAME} PRIVATE
     src/platform/Window.cpp
-    src/render/vulkan/Instance.cpp 
-    src/render/vulkan/Device.cpp
-    src/render/vulkan/Swapchain.cpp
-    src/render/vulkan/Renderer.cpp
+    src/render/vulkan/VulkanInstance.cpp 
+    src/render/vulkan/VulkanDevice.cpp
+    src/render/vulkan/VulkanSwapchain.cpp
+    src/render/vulkan/VulkanRenderer.cpp
   )
 
   # Add compile definition if C++ 20 module is enabled

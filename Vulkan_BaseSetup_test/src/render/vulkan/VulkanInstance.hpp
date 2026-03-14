@@ -11,7 +11,7 @@ class Window;
 // Gom instance, debug messenger, surface vào một chỗ
 class VulkanInstance {
 public:
-  void init(const Window &window);
+  void init(const Window &window) ;
 
   const vk::raii::Context &getContext() const { return context_; }
   const vk::raii::Instance &getInstance() const { return instance_; }

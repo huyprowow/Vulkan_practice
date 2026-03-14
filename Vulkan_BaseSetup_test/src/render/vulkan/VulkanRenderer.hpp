@@ -1,29 +1,27 @@
 #pragma once
 
+#include "../../core/IRender.hpp"
+#include "../../core/Types.hpp"
 #include "../../platform/Window.hpp"
-#include "../Types.hpp"
-#include "Device.hpp"
-#include "Swapchain.hpp"
-
+#include "VulkanDevice.hpp"
+#include "VulkanSwapchain.hpp"
 
 #include <cstdint>
 #include <vector>
 #include <vulkan/vulkan_raii.hpp>
 
-
-class Renderer {
+class VulkanRenderer : public IRenderer {
 public:
-  void init(Device &device, Swapchain &swapchain, Window &window,
-            const vk::raii::SurfaceKHR &surface);
-  void drawFrame();
-  void cleanup();
-  void recreateSwapChain();         // gọi khi swapchain out-of-date
-  void cleanupSwapChainResources(); // chỉ phần phụ thuộc swapchain
+  void init(VulkanDevice &device, VulkanSwapchain &swapchain, Window &window);
+  void drawFrame() override;
+  void cleanup() override;
+  void recreateSwapChain() override; // gọi khi swapchain out-of-date
+  void cleanupSwapChainResources();  // chỉ phần phụ thuộc swapchain
   void createSwapChainDependentResources();
 
 private:
-  Device *device_ = nullptr;
-  Swapchain *swapchain_ = nullptr;
+  VulkanDevice *device_ = nullptr;
+  VulkanSwapchain *swapchain_ = nullptr;
   Window *window_ = nullptr;
   const vk::raii::SurfaceKHR *surface_ = nullptr;
 

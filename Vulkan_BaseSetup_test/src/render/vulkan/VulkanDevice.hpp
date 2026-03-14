@@ -3,15 +3,14 @@
 #include <vector>
 #include <vulkan/vulkan_raii.hpp>
 
-
 class VulkanInstance;
 
-class Device {
+class VulkanDevice {
 public:
   void init(const vk::raii::Instance &instance,
-            const vk::raii::SurfaceKHR &surface);
+            const vk::raii::SurfaceKHR &surface) ;
 
-  const vk::raii::PhysicalDevice &getPhysicalDevice() const {
+  const vk::raii::PhysicalDevice &getPhysicalDevice() const  {
     return physicalDevice_;
   }
   const vk::raii::Device &getDevice() const { return device_; }
