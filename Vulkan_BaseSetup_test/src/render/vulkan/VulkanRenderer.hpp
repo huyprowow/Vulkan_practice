@@ -61,6 +61,10 @@ private:
   vk::raii::DeviceMemory depthImageMemory_{nullptr};
   vk::raii::ImageView depthImageView_{nullptr};
 
+  vk::raii::Image colorImage_{nullptr};
+  vk::raii::DeviceMemory colorImageMemory_{nullptr};
+  vk::raii::ImageView colorImageView_{nullptr};
+
   void createDescriptorSetLayout();
   void createGraphicsPipeline();
   [[nodiscard]] vk::raii::ShaderModule
@@ -72,11 +76,16 @@ private:
   void recordCommandBuffer(uint32_t imageIndex);
 
   void createImage(uint32_t width, uint32_t height, uint32_t mipLevels,
+                   vk::SampleCountFlagBits numSamples,
                    vk::Format format, vk::ImageTiling tiling,
                    vk::ImageUsageFlags usage,
                    vk::MemoryPropertyFlags properties, vk::raii::Image &image,
                    vk::raii::DeviceMemory &imageMemory);
+
+  void createColorResources();
+
   void createDepthResources();
+
   vk::Format findSupportedFormat(const std::vector<vk::Format> &candidates,
                                  vk::ImageTiling tiling,
                                  vk::FormatFeatureFlags features);
@@ -128,4 +137,5 @@ private:
 
   void createSyncObjects();
   void updateUniformBuffer(uint32_t currentImage);
+
 };

@@ -2,7 +2,6 @@
 #include "../../core/Types.hpp"
 #include "VulkanSwapchain.hpp"
 
-
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
@@ -27,6 +26,7 @@ void VulkanRenderer::init(VulkanDevice &device, VulkanSwapchain &swapchain,
                                // pipeline
   createGraphicsPipeline();    // tao pipeline de render
   createCommandPool();         // tao command pool luu cac command buffer
+  createColorResources();      // multi-sampled color buffer
   createDepthResources();      // depth buffer
   createTextureImage(); // tao texture image, tai image len gpu de toi uu (neu
                         // k no doc PCI -> cham), chuyen layout
@@ -109,8 +109,9 @@ void VulkanRenderer::createGraphicsPipeline() {
       .lineWidth = 1.0f};
 
   vk::PipelineMultisampleStateCreateInfo multisampling{
-      .rasterizationSamples = vk::SampleCountFlagBits::e1,
-      .sampleShadingEnable = vk::False};
+      .rasterizationSamples = device_->msaaSamples_,
+      .sampleShadingEnable = vk::True,
+      .minSampleShading = 0.2f};
 
   vk::PipelineColorBlendAttachmentState colorBlendAttachment{
       .blendEnable = vk::False,
@@ -271,8 +272,11 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
   vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
   vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
   vk::RenderingAttachmentInfo attachmentInfo = {
-      .imageView = swapchain_->getImageViews()[imageIndex],
+      .imageView = colorImageView_,
       .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+      .resolveMode = vk::ResolveModeFlagBits::eAverage,
+      .resolveImageView = swapchain_->getImageViews()[imageIndex],
+      .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
       .loadOp = vk::AttachmentLoadOp::eClear,
       .storeOp = vk::AttachmentStoreOp::eStore,
       .clearValue = clearColor,
@@ -412,8 +416,9 @@ void VulkanRenderer::createSyncObjects() {
 }
 
 void VulkanRenderer::createImage(uint32_t width, uint32_t height,
-                                 uint32_t mipLevels, vk::Format format,
-                                 vk::ImageTiling tiling,
+                                 uint32_t mipLevels,
+                                 vk::SampleCountFlagBits numSamples,
+                                 vk::Format format, vk::ImageTiling tiling,
                                  vk::ImageUsageFlags usage,
                                  vk::MemoryPropertyFlags properties,
                                  vk::raii::Image &image,
@@ -423,7 +428,7 @@ void VulkanRenderer::createImage(uint32_t width, uint32_t height,
                                 .extent = {width, height, 1},
                                 .mipLevels = mipLevels,
                                 .arrayLayers = 1,
-                                .samples = vk::SampleCountFlagBits::e1,
+                                .samples = numSamples,
                                 .tiling = tiling,
                                 .usage = usage,
                                 .sharingMode = vk::SharingMode::eExclusive};
@@ -439,10 +444,25 @@ void VulkanRenderer::createImage(uint32_t width, uint32_t height,
   image.bindMemory(imageMemory, 0);
 }
 
+void VulkanRenderer::createColorResources() {
+  vk::Format colorFormat = swapchain_->getImageFormat();
+  vk::Extent2D swapChainExtent = swapchain_->getExtent();
+
+  createImage(swapChainExtent.width, swapChainExtent.height, 1,
+              device_->msaaSamples_, colorFormat, vk::ImageTiling::eOptimal,
+              vk::ImageUsageFlagBits::eTransientAttachment |
+                  vk::ImageUsageFlagBits::eColorAttachment,
+              vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage_,
+              colorImageMemory_);
+  colorImageView_ = createImageView(colorImage_, colorFormat,
+                                    vk::ImageAspectFlagBits::eColor, 1);
+}
+
 void VulkanRenderer::createDepthResources() {
   vk::Format depthFormat = findDepthFormat();
-  createImage(swapchain_->getExtent().width, swapchain_->getExtent().height, 1,
-              depthFormat, vk::ImageTiling::eOptimal,
+  vk::Extent2D swapChainExtent = swapchain_->getExtent();
+  createImage(swapChainExtent.width, swapChainExtent.height, 1,
+              device_->msaaSamples_, depthFormat, vk::ImageTiling::eOptimal,
               vk::ImageUsageFlagBits::eDepthStencilAttachment,
               vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage_,
               depthImageMemory_);
@@ -525,8 +545,8 @@ void VulkanRenderer::createTextureImage() {
 
   vk::raii::Image textureImageTemp({});              // temp RAII image
   vk::raii::DeviceMemory textureImageMemoryTemp({}); // temp RAII memory
-  createImage(texWidth, texHeight, mipLevels_, vk::Format::eR8G8B8A8Srgb,
-              vk::ImageTiling::eOptimal,
+  createImage(texWidth, texHeight, mipLevels_, vk::SampleCountFlagBits::e1,
+              vk::Format::eR8G8B8A8Srgb, vk::ImageTiling::eOptimal,
               vk::ImageUsageFlagBits::eTransferSrc |
                   vk::ImageUsageFlagBits::eTransferDst |
                   vk::ImageUsageFlagBits::eSampled,
@@ -1026,6 +1046,9 @@ void VulkanRenderer::cleanupSwapChainResources() {
   depthImageView_ = nullptr;
   depthImage_ = nullptr;
   depthImageMemory_ = nullptr;
+  colorImageView_ = nullptr;
+  colorImage_ = nullptr;
+  colorImageMemory_ = nullptr;
 
   commandBuffers_.clear();
   renderFinishedSemaphores_.clear();
@@ -1035,6 +1058,7 @@ void VulkanRenderer::cleanupSwapChainResources() {
 
 void VulkanRenderer::createSwapChainDependentResources() {
   createDepthResources();
+  createColorResources();
   createCommandBuffers();
   createSyncObjects();
 }

@@ -20,6 +20,8 @@ public:
     return requiredDeviceExtension_;
   }
 
+  vk::SampleCountFlagBits msaaSamples_ = vk::SampleCountFlagBits::e1;
+
 private:
   vk::raii::PhysicalDevice physicalDevice_{nullptr}; // card do hoa
   vk::raii::Device device_{
@@ -31,4 +33,5 @@ private:
   void pickPhysicalDevice(const vk::raii::Instance &instance,
                           const vk::raii::SurfaceKHR &surface);
   void createLogicalDevice(const vk::raii::SurfaceKHR &surface);
+  vk::SampleCountFlagBits getMaxUsableSampleCount();
 };

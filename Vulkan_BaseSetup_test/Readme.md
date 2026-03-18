@@ -5,10 +5,10 @@
 note:
 
 - gpu driver
-  - mac: often built in
+  - mac/ios: often built in driver Metal not vk driver (lock Metal api)=> then need use molten vk translate to Metal to run (same ios)
   - window: auto detect, built in but if wrong, go to official home page install the correct hardware providing drivers for best performance and to avoid errors
   - linux: 1 billion cases for this because few people use it + a ton of distros. often builtin opensource driver. for famous distro install/use official driver for best perf, other wise use mesa driver stable but performance reduction (not sure)
-  - ios/android/raspberry pi/nitendo switch: built in
+  - android/raspberry pi/nitendo switch: built in
 - can't run in xbox(lock only DirectX api),playstation (have GNM, GNMX api not suport vk may be need to porting)
 
 ### 1. build

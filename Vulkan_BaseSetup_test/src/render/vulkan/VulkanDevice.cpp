@@ -3,9 +3,10 @@
 
 #include <cstring>
 #include <ranges>
+#include <iostream>
 
 void VulkanDevice::init(const vk::raii::Instance &instance,
-                  const vk::raii::SurfaceKHR &surface) {
+                        const vk::raii::SurfaceKHR &surface) {
   // danh sách extension
   requiredDeviceExtension_ = {
       vk::KHRSwapchainExtensionName, vk::KHRSpirv14ExtensionName,
@@ -22,7 +23,7 @@ void VulkanDevice::init(const vk::raii::Instance &instance,
 }
 
 void VulkanDevice::pickPhysicalDevice(const vk::raii::Instance &instance,
-                                const vk::raii::SurfaceKHR &surface) {
+                                      const vk::raii::SurfaceKHR &surface) {
   auto devices = instance.enumeratePhysicalDevices();
   if (devices.empty()) {
     throw std::runtime_error("failed to find GPUs with Vulkan support!");
@@ -125,6 +126,9 @@ void VulkanDevice::pickPhysicalDevice(const vk::raii::Instance &instance,
 
   if (devIter != devices.end()) {
     physicalDevice_ = *devIter;
+    msaaSamples_ = getMaxUsableSampleCount();
+    std::cout << "MSAA Samples: " << static_cast<uint32_t>(msaaSamples_)
+              << std::endl;
   } else {
     throw std::runtime_error("failed to find a suitable GPU!");
   }
@@ -163,7 +167,8 @@ void VulkanDevice::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
                      vk::PhysicalDeviceVulkan13Features,
                      vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
       featureChain = {
-          {.features = {.samplerAnisotropy =
+          {.features = {.sampleRateShading = true,
+                        .samplerAnisotropy =
                             true}},       // vk::PhysicalDeviceFeatures2
           {.shaderDrawParameters = true}, // vk::PhysicalDeviceVulkan11Features
           {.synchronization2 = true,
@@ -210,3 +215,33 @@ void VulkanDevice::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
 //         std::distance(queueFamilyProperties.begin(),
 //         graphicsQueueFamilyProperty));
 // }
+
+// tim maximum sample ho tro
+vk::SampleCountFlagBits VulkanDevice::getMaxUsableSampleCount() {
+  vk::PhysicalDeviceProperties physicalDeviceProperties =
+      physicalDevice_.getProperties();
+
+  vk::SampleCountFlags counts =
+      physicalDeviceProperties.limits.framebufferColorSampleCounts &
+      physicalDeviceProperties.limits.framebufferDepthSampleCounts;
+  if (counts & vk::SampleCountFlagBits::e64) {
+    return vk::SampleCountFlagBits::e64;
+  }
+  if (counts & vk::SampleCountFlagBits::e32) {
+    return vk::SampleCountFlagBits::e32;
+  }
+  if (counts & vk::SampleCountFlagBits::e16) {
+    return vk::SampleCountFlagBits::e16;
+  }
+  if (counts & vk::SampleCountFlagBits::e8) {
+    return vk::SampleCountFlagBits::e8;
+  }
+  if (counts & vk::SampleCountFlagBits::e4) {
+    return vk::SampleCountFlagBits::e4;
+  }
+  if (counts & vk::SampleCountFlagBits::e2) {
+    return vk::SampleCountFlagBits::e2;
+  }
+
+  return vk::SampleCountFlagBits::e1;
+}

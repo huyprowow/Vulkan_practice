@@ -106,3 +106,4 @@ vcpkg-manifest-install.log
 # Ninja build files
 build.ninja
 rules.ninja
+.cache/
