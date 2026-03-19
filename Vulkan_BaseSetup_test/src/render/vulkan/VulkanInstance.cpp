@@ -8,6 +8,7 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+/// Khởi tạo VulkanInstance: tạo instance, debug messenger, và surface
 void VulkanInstance::init(const Window &window) {
   createInstance(); // tao vk instance, thiet lap validation layers, kiem tra
                     // cac required layer, extension co duoc ho tro khong

@@ -107,3 +107,8 @@ vcpkg-manifest-install.log
 build.ninja
 rules.ninja
 .cache/
+
+# Doxygen generated output
+docs/html/
+docs/xml/
+docs/latex/

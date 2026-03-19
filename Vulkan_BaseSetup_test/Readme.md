@@ -40,6 +40,12 @@ note: using terminal "x64 Native Tools Command Prompt for VS 2022" window if use
 - build exe:  
   `cmake --build build`
 
+- (option) build docs:
+```
+cd docs && doxygen Doxyfile
+open html/index.html
+```
+or `cmake -B build -DBUILD_DOCS=ON` or `cmake --build build --target docs`
 ### 2.run
 
 go to build folder

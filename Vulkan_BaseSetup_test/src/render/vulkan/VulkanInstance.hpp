@@ -8,7 +8,7 @@ using namespace std;
 
 class Window;
 
-// Gom instance, debug messenger, surface vào một chỗ
+/// Gom instance, debug messenger, surface vào một chỗ
 class VulkanInstance {
 public:
   void init(const Window &window) ;

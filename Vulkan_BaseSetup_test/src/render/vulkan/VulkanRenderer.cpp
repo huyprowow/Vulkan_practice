@@ -15,6 +15,7 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
+/// Khởi tạo toàn bộ renderer: pipeline, command buffers, textures, buffers, sync objects
 void VulkanRenderer::init(VulkanDevice &device, VulkanSwapchain &swapchain,
                           Window &window) {
   device_ = &device;
@@ -63,6 +64,7 @@ void VulkanRenderer::createDescriptorSetLayout() {
       vk::raii::DescriptorSetLayout(device_->getDevice(), layoutInfo);
 }
 
+/// Tạo graphics pipeline: shader stages, fixed-function state, dynamic rendering
 void VulkanRenderer::createGraphicsPipeline() {
   // shader stage: shader code
   vk::raii::ShaderModule shaderModule =
@@ -246,6 +248,7 @@ void VulkanRenderer::createCommandBuffers() {
   commandBuffers_ = vk::raii::CommandBuffers(device_->getDevice(), allocInfo);
 }
 
+/// Ghi command buffer: transition layout, begin rendering, bindpipeline, draw, transition present
 void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
   auto &commandBuffer = commandBuffers_[frameIndex_];
   commandBuffer.begin({});
@@ -328,6 +331,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
   commandBuffer.end();
 }
 
+/// Chuyển đổi layout image bằng pipeline barrier (dùng cho texture upload)
 void VulkanRenderer::transitionImageLayout(const vk::raii::Image &image,
                                            vk::ImageLayout oldLayout,
                                            vk::ImageLayout newLayout,
@@ -371,6 +375,7 @@ void VulkanRenderer::transitionImageLayout(const vk::raii::Image &image,
   endSingleTimeCommands(commandBuffer);
 }
 
+/// Chuyển đổi layout image bằng VkImageMemoryBarrier2 (Vulkan 1.3 synchronization2)
 void VulkanRenderer::transition_image_layout(
     vk::Image image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
     vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask,
@@ -518,6 +523,7 @@ uint32_t VulkanRenderer::findMemoryType(uint32_t typeFilter,
   throw std::runtime_error("failed to find suitable memory type!");
 }
 
+/// Tải texture image lên GPU qua staging buffer, tạo mipmaps
 void VulkanRenderer::createTextureImage() {
   // load anh
   int texWidth, texHeight, texChannels;
@@ -570,6 +576,7 @@ void VulkanRenderer::createTextureImage() {
                   mipLevels_);
 }
 
+/// Tạo mipmap bằng vkCmdBlitImage, chia đôi kích thước mỗi level
 void VulkanRenderer::generateMipmaps(vk::raii::Image &image,
                                      vk::Format imageFormat, int32_t texWidth,
                                      int32_t texHeight, uint32_t mipLevels) {
@@ -672,8 +679,8 @@ void VulkanRenderer::generateMipmaps(vk::raii::Image &image,
   endSingleTimeCommands(commandBuffer);
 }
 
-// Overload for RAII images
-// de su dung cho texture image no dung vk::raii::Image nen phai nap chong
+/// Overload for RAII images
+/// de su dung cho texture image no dung vk::raii::Image nen phai nap chong
 vk::raii::ImageView
 VulkanRenderer::createImageView(const vk::raii::Image &image, vk::Format format,
                                 vk::ImageAspectFlags aspectFlags,
@@ -693,6 +700,7 @@ void VulkanRenderer::createTextureImageView() {
                       vk::ImageAspectFlagBits::eColor, mipLevels_);
 }
 
+/// Tạo sampler cho texture: filter, mipmap mode, anisotropy
 void VulkanRenderer::createTextureSampler() {
   // sampler kiem soat dl doc, muc mipmap, filer,...
   vk::PhysicalDeviceProperties properties =
@@ -770,6 +778,7 @@ void VulkanRenderer::copyBufferToImage(const vk::raii::Buffer &buffer,
   endSingleTimeCommands(commandBuffer);
 }
 
+/// Tạo vertex buffer: staging buffer trên host, copy sang device-local memory
 void VulkanRenderer::createVertexBuffer() {
   // vi cpu k the truy cap truc tiep vung nho toi uu nhat trong gpu
   // (VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) => dung bo dem tam thoi tren host
@@ -823,6 +832,7 @@ void VulkanRenderer::createIndexBuffer() {
   copyBuffer(stagingBuffer, indexBuffer_, bufferSize);
 }
 
+/// Tạo uniform buffers với persistent mapping cho toàn bộ vòng đời ứng dụng
 void VulkanRenderer::createUniformBuffers() {
   // persistent mapping use for all instance through app life time , not remap
   // effect perf
@@ -897,6 +907,7 @@ void VulkanRenderer::createDescriptorSets() {
   }
 }
 
+/// Tải OBJ model, loại đỉnh trùng lặp bằng unordered_map
 void VulkanRenderer::loadModel() {
   tinyobj::attrib_t attrib; // contain position, normal, texture coordinate
   std::vector<tinyobj::shape_t> shapes; // contain faces
@@ -945,6 +956,7 @@ void VulkanRenderer::loadModel() {
   std::cout << "Indices: " << indices_.size() << std::endl;
 }
 
+/// Cập nhật uniform buffer: model/view/projection matrix mỗi frame
 void VulkanRenderer::updateUniformBuffer(
     uint32_t currentImage) { // (option)co the dung push constant truyen dl
                              // thuong xuyen thay doi
@@ -1063,6 +1075,7 @@ void VulkanRenderer::createSwapChainDependentResources() {
   createSyncObjects();
 }
 
+/// Tạo lại swapchain khi window resize hoặc swapchain out-of-date
 void VulkanRenderer::recreateSwapChain() {
   int width = 0, height = 0;
   window_->getFramebufferSize(width, height);

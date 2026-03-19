@@ -23,9 +23,9 @@ public:
   vk::SampleCountFlagBits msaaSamples_ = vk::SampleCountFlagBits::e1;
 
 private:
-  vk::raii::PhysicalDevice physicalDevice_{nullptr}; // card do hoa
+  vk::raii::PhysicalDevice physicalDevice_{nullptr}; ///< card do hoa
   vk::raii::Device device_{
-      nullptr}; //  logical device tuong tac voi physical device
+      nullptr}; ///< logical device tuong tac voi physical device
   vk::raii::Queue graphicsQueue_{nullptr};
   uint32_t queueIndex_ = ~0u;
   std::vector<const char *> requiredDeviceExtension_;

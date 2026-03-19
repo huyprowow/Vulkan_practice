@@ -163,3 +163,17 @@ add_to_build(main.cpp
   TEXTURES textures/viking_room.png
   MODELS models/viking_room.obj
 )
+
+# --- Documentation (Doxygen + Graphviz) ---
+option(BUILD_DOCS "Build documentation" OFF)
+
+if(BUILD_DOCS)
+  find_package(Doxygen REQUIRED)
+
+  add_custom_target(docs
+    COMMAND ${DOXYGEN_EXECUTABLE} "${CMAKE_SOURCE_DIR}/docs/Doxyfile"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/docs"
+    COMMENT "Generating documentation"
+    VERBATIM
+  )
+endif()

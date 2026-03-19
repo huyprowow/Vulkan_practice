@@ -5,6 +5,7 @@
 #include <ranges>
 #include <iostream>
 
+/// Khởi tạo VulkanDevice: chọn physical device và tạo logical device
 void VulkanDevice::init(const vk::raii::Instance &instance,
                         const vk::raii::SurfaceKHR &surface) {
   // danh sách extension
@@ -216,7 +217,7 @@ void VulkanDevice::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
 //         graphicsQueueFamilyProperty));
 // }
 
-// tim maximum sample ho tro
+/// tim maximum sample ho tro
 vk::SampleCountFlagBits VulkanDevice::getMaxUsableSampleCount() {
   vk::PhysicalDeviceProperties physicalDeviceProperties =
       physicalDevice_.getProperties();

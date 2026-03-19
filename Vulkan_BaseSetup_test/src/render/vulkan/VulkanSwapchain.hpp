@@ -31,7 +31,7 @@ public:
     return swapChainImageViews_;
   }
 
-  // dùng cho depth/texture: tạo view từ raw image handle
+  /// dùng cho depth/texture: tạo view từ raw image handle
   vk::raii::ImageView createImageView(const vk::Image &image, vk::Format format,
                                       vk::ImageAspectFlags aspectFlags,
                                       uint32_t mipLevels,

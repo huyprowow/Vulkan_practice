@@ -39,8 +39,8 @@ constexpr bool enableValidationLayers = false;
 constexpr bool enableValidationLayers = true;
 #endif
 
-constexpr int MAX_FRAMES_IN_FLIGHT = 2; // cho phep nhieu hung hinh xu li dong
-                                        // thoi max la 2 thay vi doi tung khung
+constexpr int MAX_FRAMES_IN_FLIGHT = 2; ///< cho phep nhieu hung hinh xu li dong
+                                        ///< thoi max la 2 thay vi doi tung khung
 
 struct Vertex {
   glm::vec3 pos;
@@ -62,8 +62,8 @@ struct Vertex {
   }
 
   bool operator==(
-      const Vertex &other) const { // vi Vertex tu dinh nghia nen phai trien
-                                   // khai de dung voi unordered_map (lam key)
+      const Vertex &other) const { ///< vi Vertex tu dinh nghia nen phai trien
+                                   ///< khai de dung voi unordered_map (lam key)
     return pos == other.pos && color == other.color &&
            texCoord == other.texCoord;
   }
@@ -71,8 +71,8 @@ struct Vertex {
 
 namespace std {
 template <>
-struct hash<Vertex> { // vi Vertex tu dinh nghia nen phai trien khai de dung voi
-                      // unordered_map (lam key)
+struct hash<Vertex> { ///< vi Vertex tu dinh nghia nen phai trien khai de dung voi
+                      ///< unordered_map (lam key)
   size_t operator()(Vertex const &vertex) const {
     return ((hash<glm::vec3>()(vertex.pos) ^
              (hash<glm::vec3>()(vertex.color) << 1)) >>

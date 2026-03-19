@@ -1,0 +1,39 @@
+PROJECT_NAME           = "Vulkan Practice"
+PROJECT_BRIEF          = "Vulkan Base Setup"
+PROJECT_NUMBER         = 1.0.0
+
+INPUT                  = ../src ../main.cpp
+RECURSIVE              = YES
+FILE_PATTERNS          = *.hpp *.cpp *.h
+
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+
+GENERATE_HTML          = YES
+GENERATE_TREEVIEW      = YES
+GENERATE_LATEX         = NO
+GENERATE_XML           = NO
+
+# Preprocessing
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = NO
+PREDEFINED             = VKAPI_ATTR= \
+                         VKAPI_CALL=
+
+# Diagrams (Graphviz)
+HAVE_DOT               = YES
+CALL_GRAPH             = YES
+CALLER_GRAPH           = YES
+CLASS_GRAPH            = YES
+COLLABORATION_GRAPH    = YES
+INCLUDE_GRAPH          = YES
+INCLUDED_BY_GRAPH      = YES
+GRAPHICAL_HIERARCHY    = YES
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = YES
+
+QUIET                  = YES
+WARNINGS               = YES

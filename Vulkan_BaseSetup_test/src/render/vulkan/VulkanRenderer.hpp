@@ -15,8 +15,8 @@ public:
   void init(VulkanDevice &device, VulkanSwapchain &swapchain, Window &window);
   void drawFrame() override;
   void cleanup() override;
-  void recreateSwapChain() override; // gọi khi swapchain out-of-date
-  void cleanupSwapChainResources();  // chỉ phần phụ thuộc swapchain
+  void recreateSwapChain() override; ///< gọi khi swapchain out-of-date
+  void cleanupSwapChainResources();  ///< chỉ phần phụ thuộc swapchain
   void createSwapChainDependentResources();
 
 private:

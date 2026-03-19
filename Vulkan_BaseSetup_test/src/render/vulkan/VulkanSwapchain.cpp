@@ -7,6 +7,7 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
+/// Khởi tạo swapchain: tạo swap chain và image views
 void VulkanSwapchain::init(const vk::raii::PhysicalDevice &physicalDevice,
                      const VulkanDevice &device, const vk::raii::SurfaceKHR &surface,
                      const Window &window) {
@@ -18,6 +19,7 @@ void VulkanSwapchain::init(const vk::raii::PhysicalDevice &physicalDevice,
                             // chain de xem
 }
 
+/// Tạo lại swapchain khi window resize hoặc swapchain out-of-date
 void VulkanSwapchain::recreate(const vk::raii::PhysicalDevice &physicalDevice,
                          const VulkanDevice &device,
                          const vk::raii::SurfaceKHR &surface,
