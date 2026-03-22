@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -27,6 +28,10 @@
 
 constexpr uint32_t WIDTH = 800;
 constexpr uint32_t HEIGHT = 600;
+constexpr uint32_t PARTICLE_COUNT =
+    8192; // INVOCATIONS_SIZE = 256 nen particle count phai chia het cho INVOCATIONS_SIZE de lay so work group x
+constexpr uint32_t INVOCATIONS_SIZE =
+    256; // invocations trong 1 work group( dinh nghia trong shader compute )
 const std::string MODEL_PATH = "models/viking_room.obj";
 const std::string TEXTURE_PATH = "textures/viking_room.png";
 
@@ -86,4 +91,28 @@ struct UniformBufferObject {
   alignas(16) glm::mat4 model;
   alignas(16) glm::mat4 view;
   alignas(16) glm::mat4 proj;
+};
+
+// struc cho 1 hạt particle
+struct Particle {
+  alignas(8) glm::vec2 position; // std430: vec2 align 8
+  alignas(8) glm::vec2 velocity;
+  alignas(16) glm::vec4 color; // std430: vec4 align 16
+  static vk::VertexInputBindingDescription getBindingDescription() {
+    return {0, sizeof(Particle), vk::VertexInputRate::eVertex};
+  }
+  // Chỉ position + color, KHÔNG có velocity (chỉ compute dùng)
+  static std::array<vk::VertexInputAttributeDescription, 2>
+  getAttributeDescriptions() {
+    return {vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32Sfloat,
+                                                offsetof(Particle, position)),
+            vk::VertexInputAttributeDescription(1, 0,
+                                                vk::Format::eR32G32B32A32Sfloat,
+                                                offsetof(Particle, color))};
+  }
+};
+
+// struct cho uniform buffer object cho compute shader
+struct ComputeUBO {
+  float deltaTime;
 };

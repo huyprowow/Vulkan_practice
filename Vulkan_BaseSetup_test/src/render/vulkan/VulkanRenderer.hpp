@@ -65,6 +65,31 @@ private:
   vk::raii::DeviceMemory colorImageMemory_{nullptr};
   vk::raii::ImageView colorImageView_{nullptr};
 
+  std::vector<vk::raii::Buffer> shaderStorageBuffers_;
+  std::vector<vk::raii::DeviceMemory> shaderStorageBuffersMemory_;
+
+  // Compute pipeline
+  vk::raii::DescriptorSetLayout computeDescriptorSetLayout_{nullptr};
+  vk::raii::PipelineLayout computePipelineLayout_{nullptr};
+  vk::raii::Pipeline computePipeline_{nullptr};
+  std::vector<vk::raii::DescriptorSet> computeDescriptorSets_;
+  std::vector<vk::raii::CommandBuffer> computeCommandBuffers_;
+
+  // Particle graphics pipeline
+  vk::raii::PipelineLayout particlePipelineLayout_{nullptr};
+  vk::raii::Pipeline particlePipeline_{nullptr};
+
+  // Compute UBO (deltaTime riêng, không sửa UBO model)
+  std::vector<vk::raii::Buffer> computeUniformBuffers_;
+  std::vector<vk::raii::DeviceMemory> computeUniformBuffersMemory_;
+  std::vector<void *> computeUniformBuffersMapped_;
+
+  // Compute sync
+  std::vector<vk::raii::Fence> computeInFlightFences_;
+  std::vector<vk::raii::Semaphore> computeFinishedSemaphores_;
+
+  float lastFrameTime_ = 0.0f;
+
   void createDescriptorSetLayout();
   void createGraphicsPipeline();
   [[nodiscard]] vk::raii::ShaderModule
@@ -138,4 +163,15 @@ private:
   void createSyncObjects();
   void updateUniformBuffer(uint32_t currentImage);
 
+  void createShaderStorageBuffers();
+  void createComputeUniformBuffers();
+
+  void createComputeDescriptorSetLayout();
+  void createComputePipeline();
+  void createParticleGraphicsPipeline();
+  void createComputeDescriptorSets();
+  void createComputeCommandBuffers();
+  
+  void recordComputeCommandBuffer();
+  void updateComputeUniformBuffer(uint32_t currentFrame);
 };

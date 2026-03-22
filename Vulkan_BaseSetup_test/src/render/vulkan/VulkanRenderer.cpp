@@ -25,10 +25,14 @@ void VulkanRenderer::init(VulkanDevice &device, VulkanSwapchain &swapchain,
 
   createDescriptorSetLayout(); // layout descriptor de bind cac uniform vao
                                // pipeline
-  createGraphicsPipeline();    // tao pipeline de render
-  createCommandPool();         // tao command pool luu cac command buffer
-  createColorResources();      // multi-sampled color buffer
-  createDepthResources();      // depth buffer
+  createComputeDescriptorSetLayout(); // tao descriptor set layout cho compute
+                                      // shader
+  createGraphicsPipeline();           // tao pipeline de render
+  createComputePipeline();            // tao pipeline cho compute shader
+  createParticleGraphicsPipeline();   // tao pipeline ve particle
+  createCommandPool();                // tao command pool luu cac command buffer
+  createColorResources();             // multi-sampled color buffer
+  createDepthResources();             // depth buffer
   createTextureImage(); // tao texture image, tai image len gpu de toi uu (neu
                         // k no doc PCI -> cham), chuyen layout
   createTextureImageView(); // tao image view cho texture image
@@ -40,14 +44,18 @@ void VulkanRenderer::init(VulkanDevice &device, VulkanSwapchain &swapchain,
   createIndexBuffer();    // tao index buffer luu cac index data (tranh ve trung
                           // dinh)
   createUniformBuffers(); // uniform
+  createComputeUniformBuffers(); // tao UBO cho compute shader
+  createShaderStorageBuffers();  // tao SSBO cho particle
   createDescriptorPool(); // tao descriptor pool luu cac descriptor set (1:n -
                           // pool:set)
   createDescriptorSets(); // 1:1 - descriptor set: buffer resoure
   createCommandBuffers(); // tao command buffer luu cac command
-  createSyncObjects();    // dong bo ( semaphore cho swapchain (chan gpu tranh
-                          // xung dot- xac dinh thu tu thao tac), fence cho viec
-                          // render chi 1 khung hinh tai 1 thoi diem giu gpu cpu
-                          // dong bo)
+  createComputeDescriptorSets(); // tao descriptor set cho compute shader
+  createComputeCommandBuffers(); // tao command buffer cho compute shader
+  createSyncObjects(); // dong bo ( semaphore cho swapchain (chan gpu tranh
+                       // xung dot- xac dinh thu tu thao tac), fence cho viec
+                       // render chi 1 khung hinh tai 1 thoi diem giu gpu cpu
+                       // dong bo)
 }
 
 void VulkanRenderer::createDescriptorSetLayout() {
@@ -68,7 +76,7 @@ void VulkanRenderer::createDescriptorSetLayout() {
 void VulkanRenderer::createGraphicsPipeline() {
   // shader stage: shader code
   vk::raii::ShaderModule shaderModule =
-      createShaderModule(readFile("shaders/slang.spv"));
+      createShaderModule(readFile("shaders/shader.spv"));
   vk::PipelineShaderStageCreateInfo vertShaderStageInfo{
       .stage = vk::ShaderStageFlagBits::eVertex,
       .module = shaderModule,
@@ -262,6 +270,13 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
       vk::PipelineStageFlagBits2::eColorAttachmentOutput, // srcStage
       vk::PipelineStageFlagBits2::eColorAttachmentOutput, // dstStage
       vk::ImageAspectFlagBits::eColor, 1);
+  // transition for the MSAA color image
+  transition_image_layout(*colorImage_, vk::ImageLayout::eUndefined,
+                          vk::ImageLayout::eColorAttachmentOptimal, {},
+                          vk::AccessFlagBits2::eColorAttachmentWrite,
+                          vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                          vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                          vk::ImageAspectFlagBits::eColor, 1);
   // transition for the depth image
   transition_image_layout(*depthImage_, vk::ImageLayout::eUndefined,
                           vk::ImageLayout::eDepthAttachmentOptimal,
@@ -301,6 +316,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
   };
 
   commandBuffer.beginRendering(renderingInfo);
+  // VẼ MODEL
   commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics,
                              *graphicsPipeline_);
   commandBuffer.setViewport(
@@ -318,6 +334,12 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
       indices_.size(), 1, 0, 0,
       0); //(index count, instance count, offset index buffer, offset vertex
           // before indexing to vertex buffer, offset for instancing)
+
+  // VẼ PARTICLES (2d nen tat depth test, ve sau luon de len model)
+  commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics,
+                             *particlePipeline_);
+  commandBuffer.bindVertexBuffers(0, *shaderStorageBuffers_[frameIndex_], {0});
+  commandBuffer.draw(PARTICLE_COUNT, 1, 0, 0);
   commandBuffer.endRendering();
   // After rendering, transition the swapchain image to PRESENT_SRC
   transition_image_layout(
@@ -415,6 +437,15 @@ void VulkanRenderer::createSyncObjects() {
     presentCompleteSemaphores_.emplace_back(device_->getDevice(),
                                             vk::SemaphoreCreateInfo());
     inFlightFences_.emplace_back(
+        device_->getDevice(),
+        vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
+  }
+
+  // sync objects cho compute shader
+  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    computeFinishedSemaphores_.emplace_back(device_->getDevice(),
+                                            vk::SemaphoreCreateInfo());
+    computeInFlightFences_.emplace_back(
         device_->getDevice(),
         vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
   }
@@ -856,15 +887,18 @@ void VulkanRenderer::createUniformBuffers() {
 }
 
 void VulkanRenderer::createDescriptorPool() {
-
+  // nhan 2 uniform buffer cho compute shader va 1 uniform buffer cho graphics
+  // shader
   std::array poolSize{
       vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer,
-                             MAX_FRAMES_IN_FLIGHT),
+                             MAX_FRAMES_IN_FLIGHT * 2),
       vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler,
-                             MAX_FRAMES_IN_FLIGHT)};
+                             MAX_FRAMES_IN_FLIGHT),
+      vk::DescriptorPoolSize(vk::DescriptorType::eStorageBuffer,
+                             MAX_FRAMES_IN_FLIGHT * 2)};
   vk::DescriptorPoolCreateInfo poolInfo{
       .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-      .maxSets = MAX_FRAMES_IN_FLIGHT,
+      .maxSets = MAX_FRAMES_IN_FLIGHT * 2,
       .poolSizeCount = static_cast<uint32_t>(poolSize.size()),
       .pPoolSizes = poolSize.data()};
   descriptorPool_ = vk::raii::DescriptorPool(device_->getDevice(), poolInfo);
@@ -981,6 +1015,286 @@ void VulkanRenderer::updateUniformBuffer(
   ubo.proj[1][1] *= -1; // dao chieu y vk truc y duoi len tranh nguoc
   std::memcpy(uniformBuffersMapped_[currentImage], &ubo, sizeof(ubo));
 }
+// compute shader
+
+/// tao descriptor set layout cho compute shader
+void VulkanRenderer::createComputeDescriptorSetLayout() {
+  // co 2 layout binding cho SSBO do vi tri hat cap nhap tung khung dua tren tg
+  // chenh lech  nen can biet vi tri cua khung truoc de cap nhap
+  std::array bindings = {
+      vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eUniformBuffer, 1,
+                                     vk::ShaderStageFlagBits::eCompute},
+      vk::DescriptorSetLayoutBinding{1, vk::DescriptorType::eStorageBuffer, 1,
+                                     vk::ShaderStageFlagBits::eCompute},
+      vk::DescriptorSetLayoutBinding{2, vk::DescriptorType::eStorageBuffer, 1,
+                                     vk::ShaderStageFlagBits::eCompute}};
+  vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = bindings.size(),
+                                               .pBindings = bindings.data()};
+  computeDescriptorSetLayout_ =
+      vk::raii::DescriptorSetLayout(device_->getDevice(), layoutInfo);
+}
+
+/// tao pipeline cho compute shader
+void VulkanRenderer::createComputePipeline() {
+  vk::raii::ShaderModule shaderModule =
+      createShaderModule(readFile("shaders/compute.spv"));
+  vk::PipelineShaderStageCreateInfo stageInfo{
+      .stage = vk::ShaderStageFlagBits::eCompute,
+      .module = shaderModule,
+      .pName = "compMain"};
+  vk::PipelineLayoutCreateInfo layoutInfo{
+      .setLayoutCount = 1, .pSetLayouts = &*computeDescriptorSetLayout_};
+  computePipelineLayout_ =
+      vk::raii::PipelineLayout(device_->getDevice(), layoutInfo);
+  vk::ComputePipelineCreateInfo pipelineInfo{.stage = stageInfo,
+                                             .layout = computePipelineLayout_};
+  computePipeline_ =
+      vk::raii::Pipeline(device_->getDevice(), nullptr, pipelineInfo);
+}
+
+/// pipeline ve particle
+void VulkanRenderer::createParticleGraphicsPipeline() {
+  vk::raii::ShaderModule shaderModule =
+      createShaderModule(readFile("shaders/compute.spv"));
+  vk::PipelineShaderStageCreateInfo vertStage{
+      .stage = vk::ShaderStageFlagBits::eVertex,
+      .module = shaderModule,
+      .pName = "vertMain"};
+  vk::PipelineShaderStageCreateInfo fragStage{
+      .stage = vk::ShaderStageFlagBits::eFragment,
+      .module = shaderModule,
+      .pName = "fragMain"};
+  vk::PipelineShaderStageCreateInfo stages[] = {vertStage, fragStage};
+
+  auto bindingDesc = Particle::getBindingDescription();
+  auto attrDescs = Particle::getAttributeDescriptions();
+  vk::PipelineVertexInputStateCreateInfo vertexInput{
+      .vertexBindingDescriptionCount = 1,
+      .pVertexBindingDescriptions = &bindingDesc,
+      .vertexAttributeDescriptionCount = attrDescs.size(),
+      .pVertexAttributeDescriptions = attrDescs.data()};
+  vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
+      .topology = vk::PrimitiveTopology::ePointList};
+  vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1,
+                                                    .scissorCount = 1};
+  vk::PipelineRasterizationStateCreateInfo rasterizer{
+      .polygonMode = vk::PolygonMode::eFill,
+      .cullMode = vk::CullModeFlagBits::eNone,
+      .lineWidth = 1.0f};
+  vk::PipelineMultisampleStateCreateInfo multisampling{
+      .rasterizationSamples = device_->msaaSamples_,
+      .sampleShadingEnable = vk::True,
+      .minSampleShading = 0.2f};
+  vk::PipelineDepthStencilStateCreateInfo depthStencil{.depthTestEnable =
+                                                           vk::False};
+  vk::PipelineColorBlendAttachmentState colorBlendAttach{
+      .blendEnable = vk::True,
+      .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
+      .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
+      .colorBlendOp = vk::BlendOp::eAdd,
+      .srcAlphaBlendFactor = vk::BlendFactor::eOne,
+      .dstAlphaBlendFactor = vk::BlendFactor::eZero,
+      .alphaBlendOp = vk::BlendOp::eAdd,
+      .colorWriteMask =
+          vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+          vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+  vk::PipelineColorBlendStateCreateInfo colorBlending{
+      .attachmentCount = 1, .pAttachments = &colorBlendAttach};
+  std::vector dynamicStates = {vk::DynamicState::eViewport,
+                               vk::DynamicState::eScissor};
+  vk::PipelineDynamicStateCreateInfo dynamicState{
+      .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
+      .pDynamicStates = dynamicStates.data()};
+
+  vk::PipelineLayoutCreateInfo layoutInfo{};
+  particlePipelineLayout_ =
+      vk::raii::PipelineLayout(device_->getDevice(), layoutInfo);
+
+  vk::Format colorFormat = swapchain_->getImageFormat();
+  vk::Format depthFormat = findDepthFormat();
+  vk::PipelineRenderingCreateInfo renderingInfo{
+      .colorAttachmentCount = 1,
+      .pColorAttachmentFormats = &colorFormat,
+      .depthAttachmentFormat = depthFormat};
+  vk::GraphicsPipelineCreateInfo pipelineInfo{
+      .pNext = &renderingInfo,
+      .stageCount = 2,
+      .pStages = stages,
+      .pVertexInputState = &vertexInput,
+      .pInputAssemblyState = &inputAssembly,
+      .pViewportState = &viewportState,
+      .pRasterizationState = &rasterizer,
+      .pMultisampleState = &multisampling,
+      .pDepthStencilState = &depthStencil,
+      .pColorBlendState = &colorBlending,
+      .pDynamicState = &dynamicState,
+      .layout = particlePipelineLayout_,
+      .renderPass = nullptr};
+  vk::StructureChain chain = {pipelineInfo, renderingInfo};
+  particlePipeline_ =
+      vk::raii::Pipeline(device_->getDevice(), nullptr,
+                         chain.get<vk::GraphicsPipelineCreateInfo>());
+}
+
+/// SSBO
+void VulkanRenderer::createShaderStorageBuffers() {
+  /// tao particle hinh tron ban kinh r,velocity ra ngoai copy len gpu qua SSBO
+  shaderStorageBuffers_.clear();
+  shaderStorageBuffersMemory_.clear();
+
+  std::default_random_engine rndEngine(static_cast<unsigned>(time(nullptr)));
+  std::uniform_real_distribution<float> rndDist(0.0f, 1.0f);
+
+  std::vector<Particle> particles(PARTICLE_COUNT);
+  for (auto &particle : particles) {
+    float r = 0.25f * sqrtf(rndDist(rndEngine));
+    float theta = rndDist(rndEngine) * 2.0f * 3.14159265358979323846f;
+    float x = r * cosf(theta) * HEIGHT / WIDTH;
+    float y = r * sinf(theta);
+    particle.position = glm::vec2(x, y);
+    particle.velocity = glm::normalize(glm::vec2(x, y)) * 0.00025f;
+    particle.color = glm::vec4(rndDist(rndEngine), rndDist(rndEngine),
+                               rndDist(rndEngine), 1.0f);
+  }
+
+  vk::DeviceSize bufferSize = sizeof(Particle) * PARTICLE_COUNT;
+
+  vk::raii::Buffer stagingBuffer({});
+  vk::raii::DeviceMemory stagingBufferMemory({});
+  createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+               vk::MemoryPropertyFlagBits::eHostVisible |
+                   vk::MemoryPropertyFlagBits::eHostCoherent,
+               stagingBuffer, stagingBufferMemory);
+  void *data = stagingBufferMemory.mapMemory(0, bufferSize);
+  std::memcpy(data, particles.data(), bufferSize);
+  stagingBufferMemory.unmapMemory();
+
+  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    vk::raii::Buffer buffer({});
+    vk::raii::DeviceMemory bufferMem({});
+    createBuffer(bufferSize,
+                 vk::BufferUsageFlagBits::eStorageBuffer |
+                     vk::BufferUsageFlagBits::eVertexBuffer |
+                     vk::BufferUsageFlagBits::eTransferDst,
+                 vk::MemoryPropertyFlagBits::eDeviceLocal, buffer, bufferMem);
+    copyBuffer(stagingBuffer, buffer, bufferSize);
+    shaderStorageBuffers_.emplace_back(std::move(buffer));
+    shaderStorageBuffersMemory_.emplace_back(std::move(bufferMem));
+  }
+}
+
+/// UBO cho compute shader
+void VulkanRenderer::createComputeUniformBuffers() {
+  computeUniformBuffers_.clear();
+  computeUniformBuffersMemory_.clear();
+  computeUniformBuffersMapped_.clear();
+
+  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    vk::DeviceSize bufferSize = sizeof(ComputeUBO);
+    vk::raii::Buffer buffer({});
+    vk::raii::DeviceMemory bufferMem({});
+    createBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer,
+                 vk::MemoryPropertyFlagBits::eHostVisible |
+                     vk::MemoryPropertyFlagBits::eHostCoherent,
+                 buffer, bufferMem);
+    computeUniformBuffers_.emplace_back(std::move(buffer));
+    computeUniformBuffersMemory_.emplace_back(std::move(bufferMem));
+    computeUniformBuffersMapped_.emplace_back(
+        computeUniformBuffersMemory_[i].mapMemory(0, bufferSize));
+  }
+}
+
+void VulkanRenderer::createComputeDescriptorSets() {
+  /// 2 descriptor set cho compute shader moi set bind 1 UBO va 2 SSBO, 2 ssbo
+  /// luan chuyen doc ghi tung khung
+  std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT,
+                                               *computeDescriptorSetLayout_);
+  vk::DescriptorSetAllocateInfo allocInfo{
+      .descriptorPool = *descriptorPool_,
+      .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+      .pSetLayouts = layouts.data()};
+  computeDescriptorSets_ =
+      device_->getDevice().allocateDescriptorSets(allocInfo);
+
+  vk::DeviceSize ssboSize = sizeof(Particle) * PARTICLE_COUNT;
+  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    vk::DescriptorBufferInfo uboInfo{.buffer = *computeUniformBuffers_[i],
+                                     .offset = 0,
+                                     .range = sizeof(ComputeUBO)};
+    vk::DescriptorBufferInfo ssboInInfo{
+        .buffer = *shaderStorageBuffers_[(i - 1 + MAX_FRAMES_IN_FLIGHT) %
+                                         MAX_FRAMES_IN_FLIGHT],
+        .offset = 0,
+        .range = ssboSize};
+    vk::DescriptorBufferInfo ssboOutInfo{
+        .buffer = *shaderStorageBuffers_[i], .offset = 0, .range = ssboSize};
+    std::array writes = {
+        vk::WriteDescriptorSet{.dstSet = *computeDescriptorSets_[i],
+                               .dstBinding = 0,
+                               .descriptorCount = 1,
+                               .descriptorType =
+                                   vk::DescriptorType::eUniformBuffer,
+                               .pBufferInfo = &uboInfo},
+        vk::WriteDescriptorSet{.dstSet = *computeDescriptorSets_[i],
+                               .dstBinding = 1,
+                               .descriptorCount = 1,
+                               .descriptorType =
+                                   vk::DescriptorType::eStorageBuffer,
+                               .pBufferInfo = &ssboInInfo},
+        vk::WriteDescriptorSet{.dstSet = *computeDescriptorSets_[i],
+                               .dstBinding = 2,
+                               .descriptorCount = 1,
+                               .descriptorType =
+                                   vk::DescriptorType::eStorageBuffer,
+                               .pBufferInfo = &ssboOutInfo}};
+    device_->getDevice().updateDescriptorSets(writes, {});
+  }
+}
+
+void VulkanRenderer::createComputeCommandBuffers() {
+  computeCommandBuffers_.clear();
+  vk::CommandBufferAllocateInfo allocInfo{
+      .commandPool = commandPool_,
+      .level = vk::CommandBufferLevel::ePrimary,
+      .commandBufferCount = MAX_FRAMES_IN_FLIGHT};
+  computeCommandBuffers_ =
+      vk::raii::CommandBuffers(device_->getDevice(), allocInfo);
+}
+
+void VulkanRenderer::recordComputeCommandBuffer() {
+  /// ghi lenh compute moi fframe , dispatch (PARTICLE_COUNT / INVOCATIONS_SIZE)
+  /// work groups x size 1 work group y, 1 work group z
+  auto &cmd = computeCommandBuffers_[frameIndex_];
+  uint32_t work_group_countX = PARTICLE_COUNT / INVOCATIONS_SIZE;
+  cmd.begin({});
+  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *computePipeline_);
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                         computePipelineLayout_, 0,
+                         *computeDescriptorSets_[frameIndex_], nullptr);
+  cmd.dispatch(work_group_countX, 1,
+               1); // 32 work group x, 1 work
+  // group y, 1 work group z
+  cmd.end();
+  static std::once_flag flag;
+  std::call_once(flag, [&] {
+    std::cout << "dispatch (X,Y,Z): (" << work_group_countX << ",1,1)"
+              << std::endl;
+  });
+}
+
+void VulkanRenderer::updateComputeUniformBuffer(uint32_t currentFrame) {
+  /// cap nhap UBO cho compute shader moi khung dua tren tg delta time
+  static auto startTime = std::chrono::high_resolution_clock::now();
+  auto currentTime = std::chrono::high_resolution_clock::now();
+  float time =
+      std::chrono::duration<float, std::milli>(currentTime - startTime).count();
+
+  ComputeUBO ubo{};
+  ubo.deltaTime = (time - lastFrameTime_) * 2.0f;
+  lastFrameTime_ = time;
+
+  std::memcpy(computeUniformBuffersMapped_[currentFrame], &ubo, sizeof(ubo));
+}
 
 /**
  *  step rendering common
@@ -991,6 +1305,27 @@ void VulkanRenderer::updateUniformBuffer(
  * - trinh chieu anh chuoi swapchain
  */
 void VulkanRenderer::drawFrame() {
+  /// compute -> semaphore -> graphics -> semaphore -> present
+  // COMPUTE
+  auto computeFenceResult = device_->getDevice().waitForFences(
+      *computeInFlightFences_[frameIndex_], vk::True, UINT64_MAX);
+
+  if (computeFenceResult != vk::Result::eSuccess) {
+    throw std::runtime_error("failed to wait for compute fence!");
+  }
+
+  updateComputeUniformBuffer(frameIndex_);
+  device_->getDevice().resetFences(*computeInFlightFences_[frameIndex_]);
+  computeCommandBuffers_[frameIndex_].reset();
+  recordComputeCommandBuffer();
+  vk::SubmitInfo computeSubmitInfo{
+      .commandBufferCount = 1,
+      .pCommandBuffers = &*computeCommandBuffers_[frameIndex_],
+      .signalSemaphoreCount = 1,
+      .pSignalSemaphores = &*computeFinishedSemaphores_[frameIndex_]};
+  device_->getGraphicsQueue().submit(computeSubmitInfo,
+                                     *computeInFlightFences_[frameIndex_]);
+  // GRAPHICS
   auto fenceResult = device_->getDevice().waitForFences(
       *inFlightFences_[frameIndex_], vk::True, UINT64_MAX);
   if (fenceResult != vk::Result::eSuccess) {
@@ -1015,18 +1350,25 @@ void VulkanRenderer::drawFrame() {
   updateUniformBuffer(frameIndex_);
 
   // gui bo dem lenh
-  vk::PipelineStageFlags waitDestinationStageMask(
-      vk::PipelineStageFlagBits::eColorAttachmentOutput);
-  const vk::SubmitInfo submitInfo{
-      .waitSemaphoreCount = 1,
-      .pWaitSemaphores = &*presentCompleteSemaphores_[frameIndex_],
-      .pWaitDstStageMask = &waitDestinationStageMask,
+  vk::Semaphore waitSemaphores[] = {// mảng 2 phần tử
+                                    *computeFinishedSemaphores_[frameIndex_],
+                                    *presentCompleteSemaphores_[frameIndex_]};
+  vk::PipelineStageFlags waitStages[] = {
+      // mảng 2 phần tử
+      vk::PipelineStageFlagBits::eVertexInput,
+      vk::PipelineStageFlagBits::eColorAttachmentOutput};
+  const vk::SubmitInfo graphicsSubmitInfo{
+      .waitSemaphoreCount = 2,
+      .pWaitSemaphores = waitSemaphores,
+      .pWaitDstStageMask = waitStages,
       .commandBufferCount = 1,
       .pCommandBuffers = &*commandBuffers_[frameIndex_],
       .signalSemaphoreCount = 1,
       .pSignalSemaphores = &*renderFinishedSemaphores_[imageIndex]};
-  device_->getGraphicsQueue().submit(submitInfo, *inFlightFences_[frameIndex_]);
+  device_->getGraphicsQueue().submit(graphicsSubmitInfo,
+                                     *inFlightFences_[frameIndex_]);
 
+  // PRESENT
   try {
     const vk::PresentInfoKHR presentInfoKHR{
         .waitSemaphoreCount = 1,
@@ -1066,6 +1408,10 @@ void VulkanRenderer::cleanupSwapChainResources() {
   renderFinishedSemaphores_.clear();
   presentCompleteSemaphores_.clear();
   inFlightFences_.clear();
+
+  computeCommandBuffers_.clear();
+  computeFinishedSemaphores_.clear();
+  computeInFlightFences_.clear();
 }
 
 void VulkanRenderer::createSwapChainDependentResources() {
@@ -1099,6 +1445,20 @@ void VulkanRenderer::recreateSwapChain() {
 void VulkanRenderer::cleanup() {
   cleanupSwapChainResources();
 
+  // compute
+  computeDescriptorSets_.clear();
+  computeUniformBuffersMapped_.clear();
+  computeUniformBuffersMemory_.clear();
+  computeUniformBuffers_.clear();
+  shaderStorageBuffers_.clear();
+  shaderStorageBuffersMemory_.clear();
+  computePipeline_ = nullptr;
+  computePipelineLayout_ = nullptr;
+  computeDescriptorSetLayout_ = nullptr;
+  particlePipeline_ = nullptr;
+  particlePipelineLayout_ = nullptr;
+
+  // graphics
   descriptorSets_.clear();
   uniformBuffersMapped_.clear();
   uniformBuffersMemory_.clear();

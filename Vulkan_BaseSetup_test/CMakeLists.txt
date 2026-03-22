@@ -86,20 +86,36 @@ endif()
 function(add_slang_shader_target TARGET)
   cmake_parse_arguments("SHADER" "" "" "SOURCES" ${ARGN})
   set(SHADERS_DIR ${CMAKE_BINARY_DIR}/shaders)
-  set(ENTRY_POINTS -entry vertMain -entry fragMain)
   add_custom_command(
     OUTPUT ${SHADERS_DIR}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DIR}
   )
-  add_custom_command(
-    OUTPUT ${SHADERS_DIR}/slang.spv
-    COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCES} -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name ${ENTRY_POINTS} -o slang.spv
-    WORKING_DIRECTORY ${SHADERS_DIR}
-    DEPENDS ${SHADERS_DIR} ${SHADER_SOURCES}
-    COMMENT "Compiling Slang Shaders"
-    VERBATIM
-  )
-  add_custom_target(${TARGET}_shader DEPENDS ${SHADERS_DIR}/slang.spv)
+
+  set(SHADER_OUTPUTS "")
+  foreach(SRC_FILE ${SHADER_SOURCES})
+    get_filename_component(NAME_WE ${SRC_FILE} NAME_WE)  # shader → shader, compute → compute
+    set(OUT_FILE ${NAME_WE}.spv)
+
+    set(ENTRY_POINTS -entry vertMain -entry fragMain)
+    file(READ ${SRC_FILE} SHADER_CONTENT)
+    string(FIND "${SHADER_CONTENT}" "compMain" HAS_COMP)
+    if(NOT HAS_COMP EQUAL -1)
+      list(APPEND ENTRY_POINTS -entry compMain)
+    endif()
+
+    add_custom_command(
+      OUTPUT ${SHADERS_DIR}/${OUT_FILE}
+      COMMAND ${SLANGC_EXECUTABLE} ${SRC_FILE} -target spirv -profile spirv_1_4
+              -emit-spirv-directly -fvk-use-entrypoint-name ${ENTRY_POINTS} -o ${OUT_FILE}
+      WORKING_DIRECTORY ${SHADERS_DIR}
+      DEPENDS ${SHADERS_DIR} ${SRC_FILE}
+      COMMENT "Compiling ${NAME_WE}.slang"
+      VERBATIM
+    )
+    list(APPEND SHADER_OUTPUTS ${SHADERS_DIR}/${OUT_FILE})
+  endforeach()
+
+  add_custom_target(${TARGET}_shader DEPENDS ${SHADER_OUTPUTS})
 endfunction()
 
 function(add_to_build CPP_FILE)
@@ -112,7 +128,7 @@ function(add_to_build CPP_FILE)
   target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_sources(${PROJECT_NAME} PRIVATE
     src/platform/Window.cpp
-    src/render/vulkan/VulkanInstance.cpp 
+    src/render/vulkan/VulkanInstance.cpp
     src/render/vulkan/VulkanDevice.cpp
     src/render/vulkan/VulkanSwapchain.cpp
     src/render/vulkan/VulkanRenderer.cpp
@@ -135,7 +151,7 @@ function(add_to_build CPP_FILE)
   endif()
 
   if(DEFINED ARG_SHADER)
-    file(GLOB SHADER_SLANG_SOURCES ${CMAKE_CURRENT_LIST_DIR}/shaders/${ARG_SHADER}.slang)
+    file(GLOB SHADER_SLANG_SOURCES ${CMAKE_CURRENT_LIST_DIR}/shaders/*.slang)
     if(SHADER_SLANG_SOURCES)
       add_slang_shader_target(${PROJECT_NAME} SOURCES ${SHADER_SLANG_SOURCES})
       add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}_shader)

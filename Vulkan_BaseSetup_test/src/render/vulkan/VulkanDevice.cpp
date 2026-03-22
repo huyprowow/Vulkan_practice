@@ -2,8 +2,9 @@
 #include "../../core/Types.hpp"
 
 #include <cstring>
-#include <ranges>
 #include <iostream>
+#include <ranges>
+
 
 /// Khởi tạo VulkanDevice: chọn physical device và tạo logical device
 void VulkanDevice::init(const vk::raii::Instance &instance,
@@ -151,8 +152,10 @@ void VulkanDevice::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
        qfpIndex++) {
     if ((queueFamilyProperties[qfpIndex].queueFlags &
          vk::QueueFlagBits::eGraphics) &&
-        physicalDevice_.getSurfaceSupportKHR(qfpIndex, *surface)) {
-      // found a queue family that supports both graphics and present
+        physicalDevice_.getSurfaceSupportKHR(qfpIndex, *surface) &&
+        (queueFamilyProperties[qfpIndex].queueFlags &
+         vk::QueueFlagBits::eCompute)) {
+      // found a queue family that supports both graphics, present and compute
       queueIndex_ = qfpIndex;
       break;
     }
