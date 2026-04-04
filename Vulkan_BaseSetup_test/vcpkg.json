@@ -6,6 +6,16 @@
     "stb",
     "tinygltf",
     "nlohmann-json",
-    "ktx"
+    "ktx",
+    {
+      "name": "directx-dxc",
+      "host": true
+    },
+    "directx-dxc",
+    "directx-headers",
+    "directx12-agility",
+    "directxmath",
+    "directxtk12",
+    "winpixevent"
   ]
 }

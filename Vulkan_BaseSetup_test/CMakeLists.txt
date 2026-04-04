@@ -20,6 +20,10 @@ find_package(glm REQUIRED)
 find_package(tinyobjloader REQUIRED)
 find_package(Vulkan REQUIRED)
 
+if(ENABLE_DX12)
+  find_package(directxtk12 CONFIG REQUIRED)
+endif()
+
 #slang
 # add_executable (glslang::validator IMPORTED)
 # find_program (GLSLANG_VALIDATOR "glslangValidator" HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
@@ -43,6 +47,17 @@ if(ENABLE_CPP20_MODULE)
     PUBLIC
     Vulkan::Vulkan
   )
+
+  if(ENABLE_DX12)
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+      d3d12.lib dxgi.lib dxguid.lib uuid.lib
+      kernel32.lib user32.lib
+      comdlg32.lib advapi32.lib shell32.lib
+      ole32.lib oleaut32.lib
+      runtimeobject.lib
+      Microsoft::DirectXTK12
+    )
+  endif()
 
   set_target_properties(VulkanCppModule PROPERTIES CXX_STANDARD 20)
 
@@ -93,7 +108,7 @@ function(add_slang_shader_target TARGET)
 
   set(SHADER_OUTPUTS "")
   foreach(SRC_FILE ${SHADER_SOURCES})
-    get_filename_component(NAME_WE ${SRC_FILE} NAME_WE)  # shader → shader, compute → compute
+    get_filename_component(NAME_WE ${SRC_FILE} NAME_WE) # shader → shader, compute → compute
     set(OUT_FILE ${NAME_WE}.spv)
 
     set(ENTRY_POINTS -entry vertMain -entry fragMain)
@@ -106,7 +121,7 @@ function(add_slang_shader_target TARGET)
     add_custom_command(
       OUTPUT ${SHADERS_DIR}/${OUT_FILE}
       COMMAND ${SLANGC_EXECUTABLE} ${SRC_FILE} -target spirv -profile spirv_1_4
-              -emit-spirv-directly -fvk-use-entrypoint-name ${ENTRY_POINTS} -o ${OUT_FILE}
+      -emit-spirv-directly -fvk-use-entrypoint-name ${ENTRY_POINTS} -o ${OUT_FILE}
       WORKING_DIRECTORY ${SHADERS_DIR}
       DEPENDS ${SHADERS_DIR} ${SRC_FILE}
       COMMENT "Compiling ${NAME_WE}.slang"

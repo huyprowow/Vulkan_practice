@@ -110,6 +110,8 @@ void VulkanInstance::createInstance() {
 #endif
 
   instance_ = vk::raii::Instance(context_, createInfo);
+  std::cout << "Validation layers: " << (enableValidationLayers ? "ON" : "OFF")
+            << std::endl;
 }
 
 void VulkanInstance::setupDebugMessenger() {

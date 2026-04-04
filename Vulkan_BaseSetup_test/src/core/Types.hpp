@@ -29,11 +29,15 @@
 constexpr uint32_t WIDTH = 800;
 constexpr uint32_t HEIGHT = 600;
 constexpr uint32_t PARTICLE_COUNT =
-    8192; // INVOCATIONS_SIZE = 256 nen particle count phai chia het cho INVOCATIONS_SIZE de lay so work group x
+    8192; // INVOCATIONS_SIZE = 256 nen particle count phai chia het cho
+          // INVOCATIONS_SIZE de lay so work group x
 constexpr uint32_t INVOCATIONS_SIZE =
     256; // invocations trong 1 work group( dinh nghia trong shader compute )
 const std::string MODEL_PATH = "models/viking_room.obj";
 const std::string TEXTURE_PATH = "textures/viking_room.png";
+
+// Validation layers co the quan li bang vulkanconfig thay cho hard-coded o day
+// (cai vulkan configurator (GUI) roi chinh hoang chinh bang vkconfig.exe)
 
 const std::vector<const char *> validationLayers = {
     "VK_LAYER_KHRONOS_validation"};
@@ -44,8 +48,9 @@ constexpr bool enableValidationLayers = false;
 constexpr bool enableValidationLayers = true;
 #endif
 
-constexpr int MAX_FRAMES_IN_FLIGHT = 2; ///< cho phep nhieu hung hinh xu li dong
-                                        ///< thoi max la 2 thay vi doi tung khung
+constexpr int MAX_FRAMES_IN_FLIGHT =
+    2; ///< cho phep nhieu hung hinh xu li dong
+       ///< thoi max la 2 thay vi doi tung khung
 
 struct Vertex {
   glm::vec3 pos;
@@ -76,8 +81,8 @@ struct Vertex {
 
 namespace std {
 template <>
-struct hash<Vertex> { ///< vi Vertex tu dinh nghia nen phai trien khai de dung voi
-                      ///< unordered_map (lam key)
+struct hash<Vertex> { ///< vi Vertex tu dinh nghia nen phai trien khai de dung
+                      ///< voi unordered_map (lam key)
   size_t operator()(Vertex const &vertex) const {
     return ((hash<glm::vec3>()(vertex.pos) ^
              (hash<glm::vec3>()(vertex.color) << 1)) >>
