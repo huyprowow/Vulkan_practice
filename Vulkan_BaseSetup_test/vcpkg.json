@@ -9,13 +9,32 @@
     "ktx",
     {
       "name": "directx-dxc",
-      "host": true
+      "host": true,
+      "platform": "windows"
     },
-    "directx-dxc",
-    "directx-headers",
-    "directx12-agility",
-    "directxmath",
-    "directxtk12",
-    "winpixevent"
+    {
+      "name": "directx-dxc",
+      "platform": "windows"
+    },
+    {
+      "name": "directx-headers",
+      "platform": "windows"
+    },
+    {
+      "name": "directx12-agility",
+      "platform": "windows"
+    },
+    {
+      "name": "directxmath",
+      "platform": "windows"
+    },
+    {
+      "name": "directxtk12",
+      "platform": "windows"
+    },
+    {
+      "name": "winpixevent",
+      "platform": "windows"
+    }
   ]
 }
