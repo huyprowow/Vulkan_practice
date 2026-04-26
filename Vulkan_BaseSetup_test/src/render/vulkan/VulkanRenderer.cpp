@@ -12,15 +12,34 @@
 #include <fstream>
 #include <iostream>
 
+#if !defined(__ANDROID__)
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
+#endif
 
-/// Khởi tạo toàn bộ renderer: pipeline, command buffers, textures, buffers, sync objects
+#if defined(__ANDROID__)
+#include <android/asset_manager.h>
+#include <android/asset_manager_jni.h>
+#endif
+
+/// Khởi tạo toàn bộ renderer: pipeline, command buffers, textures, buffers,
+/// (android: assetManager) sync objects
 void VulkanRenderer::init(VulkanDevice &device, VulkanSwapchain &swapchain,
-                          Window &window) {
+                          IWindow &window,
+#if defined(__ANDROID__)
+                          AAssetManager *assetManager
+#else
+                          void *assetManager
+#endif
+) {
   device_ = &device;
   swapchain_ = &swapchain;
   window_ = &window;
+
+#if defined(__ANDROID__)
+  assetManager_ = assetManager;
+#endif
+
   surface_ = &swapchain_->getSurface();
 
   createDescriptorSetLayout(); // layout descriptor de bind cac uniform vao
@@ -72,11 +91,17 @@ void VulkanRenderer::createDescriptorSetLayout() {
       vk::raii::DescriptorSetLayout(device_->getDevice(), layoutInfo);
 }
 
-/// Tạo graphics pipeline: shader stages, fixed-function state, dynamic rendering
+/// Tạo graphics pipeline: shader stages, fixed-function state, dynamic
+/// rendering
 void VulkanRenderer::createGraphicsPipeline() {
   // shader stage: shader code
   vk::raii::ShaderModule shaderModule =
-      createShaderModule(readFile("shaders/shader.spv"));
+      createShaderModule(readFile("shaders/shader.spv"
+#if defined(__ANDROID__)
+                                  ,
+                                  assetManager_
+#endif
+                                  ));
   vk::PipelineShaderStageCreateInfo vertShaderStageInfo{
       .stage = vk::ShaderStageFlagBits::eVertex,
       .module = shaderModule,
@@ -201,7 +226,35 @@ VulkanRenderer::createShaderModule(const std::vector<char> &code) const {
   return shaderModule;
 }
 
-std::vector<char> VulkanRenderer::readFile(const std::string &filename) {
+/// Nếu Android và có assetManager → dùng AAssetManager_open để đọc file trong
+/// APK. Nếu không → dùng filesystem path.(fallback)
+/// trong desktop load tu file system, trong android load tu resource cua APK
+std::vector<char> VulkanRenderer::readFile(const std::string &filename
+#if defined(__ANDROID__)
+                                           ,
+                                           AAssetManager *assetManager
+#endif
+
+) {
+
+#if defined(__ANDROID__)
+  if (assetManager) {
+    AAsset *asset =
+        AAssetManager_open(assetManager, filename.c_str(), AASSET_MODE_BUFFER);
+    if (!asset) {
+      throw std::runtime_error("failed to open asset: " + filename);
+    }
+    const off_t length = AAsset_getLength(asset);
+    std::vector<char> buffer(static_cast<size_t>(length));
+    const int64_t readBytes = AAsset_read(asset, buffer.data(), length);
+    AAsset_close(asset);
+    if (readBytes != length) {
+      throw std::runtime_error("failed to read full asset: " + filename);
+    }
+    return buffer;
+  }
+#endif
+  // Desktop (or Android fallback) filesystem path
   std::ifstream file(filename, std::ios::ate | std::ios::binary);
 
   if (!file.is_open()) {
@@ -256,7 +309,8 @@ void VulkanRenderer::createCommandBuffers() {
   commandBuffers_ = vk::raii::CommandBuffers(device_->getDevice(), allocInfo);
 }
 
-/// Ghi command buffer: transition layout, begin rendering, bindpipeline, draw, transition present
+/// Ghi command buffer: transition layout, begin rendering, bindpipeline, draw,
+/// transition present
 void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
   auto &commandBuffer = commandBuffers_[frameIndex_];
   commandBuffer.begin({});
@@ -397,7 +451,8 @@ void VulkanRenderer::transitionImageLayout(const vk::raii::Image &image,
   endSingleTimeCommands(commandBuffer);
 }
 
-/// Chuyển đổi layout image bằng VkImageMemoryBarrier2 (Vulkan 1.3 synchronization2)
+/// Chuyển đổi layout image bằng VkImageMemoryBarrier2 (Vulkan 1.3
+/// synchronization2)
 void VulkanRenderer::transition_image_layout(
     vk::Image image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
     vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask,
@@ -1037,7 +1092,12 @@ void VulkanRenderer::createComputeDescriptorSetLayout() {
 /// tao pipeline cho compute shader
 void VulkanRenderer::createComputePipeline() {
   vk::raii::ShaderModule shaderModule =
-      createShaderModule(readFile("shaders/compute.spv"));
+      createShaderModule(readFile("shaders/compute.spv"
+#if defined(__ANDROID__)
+                                  ,
+                                  assetManager_
+#endif
+                                  ));
   vk::PipelineShaderStageCreateInfo stageInfo{
       .stage = vk::ShaderStageFlagBits::eCompute,
       .module = shaderModule,
@@ -1055,7 +1115,12 @@ void VulkanRenderer::createComputePipeline() {
 /// pipeline ve particle
 void VulkanRenderer::createParticleGraphicsPipeline() {
   vk::raii::ShaderModule shaderModule =
-      createShaderModule(readFile("shaders/compute.spv"));
+      createShaderModule(readFile("shaders/compute.spv"
+#if defined(__ANDROID__)
+                                  ,
+                                  assetManager_
+#endif
+                                  ));
   vk::PipelineShaderStageCreateInfo vertStage{
       .stage = vk::ShaderStageFlagBits::eVertex,
       .module = shaderModule,
@@ -1378,8 +1443,7 @@ void VulkanRenderer::drawFrame() {
         .pImageIndices = &imageIndex};
     result = device_->getGraphicsQueue().presentKHR(presentInfoKHR);
     if (result == vk::Result::eErrorOutOfDateKHR ||
-        result == vk::Result::eSuboptimalKHR || window_->wasResized()) {
-      window_->clearResized();
+        result == vk::Result::eSuboptimalKHR) {
       recreateSwapChain();
     } else if (result != vk::Result::eSuccess) {
       throw std::runtime_error("failed to present swap chain image!");
@@ -1427,7 +1491,9 @@ void VulkanRenderer::recreateSwapChain() {
   window_->getFramebufferSize(width, height);
   while (width == 0 || height == 0) {
     window_->getFramebufferSize(width, height);
+#if !defined(__ANDROID__)
     glfwWaitEvents();
+#endif
   }
   device_->getDevice().waitIdle();
 

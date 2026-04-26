@@ -1,51 +1,31 @@
 #include "VulkanInstance.hpp"
-#include "../../platform/Window.hpp"
 #include "../../core/Types.hpp"
+#include "../../platform/IWindow.hpp"
 
 #include <cstring>
 #include <iostream>
 
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-
 /// Khởi tạo VulkanInstance: tạo instance, debug messenger, và surface
-void VulkanInstance::init(const Window &window) {
-  createInstance(); // tao vk instance, thiet lap validation layers, kiem tra
-                    // cac required layer, extension co duoc ho tro khong
+void VulkanInstance::init(const IWindow &window) {
+  createInstance(
+      window); // tao vk instance, thiet lap validation layers, kiem tra
+               // cac required layer, extension co duoc ho tro khong
   setupDebugMessenger(); // thiet lap debug messenger cho validation layer
   createSurface(window);
 }
 
-void VulkanInstance::createSurface(const Window &window) {
-  VkSurfaceKHR _surface;
-  if (glfwCreateWindowSurface(*instance_, window.getHandle(), nullptr,
-                              &_surface) != 0) {
-    throw std::runtime_error("failed to create window surface!");
-  }
-  surface_ = vk::raii::SurfaceKHR(instance_, _surface);
+void VulkanInstance::createSurface(const IWindow &window) {
+  VkSurfaceKHR rawSurface =
+      window.createSurface(static_cast<VkInstance>(*instance_));
+  surface_ = vk::raii::SurfaceKHR(instance_, rawSurface);
 }
 
-std::vector<const char *> VulkanInstance::getRequiredExtensions() const {
-  uint32_t glfwExtensionCount = 0;
-  auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-
-  std::vector<const char *> extensions(glfwExtensions,
-                                       glfwExtensions + glfwExtensionCount);
-
-  // Add portability extensions for MoltenVK on macOS
-#ifdef __APPLE__
-  extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
-  extensions.push_back("VK_KHR_get_physical_device_properties2");
-#endif
-
-  if (enableValidationLayers) {
-    extensions.push_back(vk::EXTDebugUtilsExtensionName);
-  }
-
-  return extensions;
+std::vector<const char *>
+VulkanInstance::getRequiredExtensions(const IWindow &window) const {
+  return window.getRequiredInstanceExtensions(enableValidationLayers);
 }
 
-void VulkanInstance::createInstance() {
+void VulkanInstance::createInstance(const IWindow &window) {
   // Use Vulkan 1.3 for macOS (MoltenVK), 1.4 for Windows/Linux (native
   // Vulkan)
 #ifdef __APPLE__
@@ -57,15 +37,17 @@ void VulkanInstance::createInstance() {
 #endif
 
   constexpr vk::ApplicationInfo appInfo{
-      .pApplicationName = "Hello Triangle",
+      .pApplicationName = "Vk Application",
       .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
       .pEngineName = "No Engine",
       .engineVersion = VK_MAKE_VERSION(1, 0, 0),
       .apiVersion = vulkanApiVersion};
 
+  bool useValidationLayers = enableValidationLayers;
+
   // get required layers
   std::vector<char const *> requiredLayers;
-  if (enableValidationLayers) {
+  if (useValidationLayers) {
     requiredLayers.assign(validationLayers.begin(), validationLayers.end());
   }
   // check if the required layers are supported by the Vulkan implementation.
@@ -75,13 +57,17 @@ void VulkanInstance::createInstance() {
             layerProperties, [requiredLayer](auto const &layerProperty) {
               return std::strcmp(layerProperty.layerName, requiredLayer) == 0;
             })) {
-      throw std::runtime_error("Required layer not supported: " +
-                               std::string(requiredLayer));
+      std::cerr << "Validation layer not supported: " << requiredLayer
+                << " (disabling validationLayers)" << std::endl;
+      useValidationLayers = false;
+      requiredLayers.clear();
+      break;
     }
   }
 
   // Get the required extensions.
-  auto requiredExtensions = getRequiredExtensions();
+  auto requiredExtensions =
+      window.getRequiredInstanceExtensions(useValidationLayers);
 
   // Check if the required extensions are supported by the Vulkan
   // implementation.
@@ -110,7 +96,7 @@ void VulkanInstance::createInstance() {
 #endif
 
   instance_ = vk::raii::Instance(context_, createInfo);
-  std::cout << "Validation layers: " << (enableValidationLayers ? "ON" : "OFF")
+  std::cout << "Validation layers: " << (useValidationLayers ? "ON" : "OFF")
             << std::endl;
 }
 

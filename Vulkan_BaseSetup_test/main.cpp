@@ -36,7 +36,7 @@
 
 #include "src/core/IRender.hpp"
 #include "src/core/Types.hpp"
-#include "src/platform/Window.hpp"
+#include "src/platform/desktop/Window.hpp"
 
 #include "src/render/vulkan/VulkanDevice.hpp"
 #include "src/render/vulkan/VulkanInstance.hpp"
@@ -45,7 +45,7 @@
 
 enum class Backend { Vulkan, DX12, WebGPU };
 
-class HelloTriangleApplication {
+class Application {
 public:
   void run() {
     initGraphics();
@@ -71,7 +71,7 @@ private:
     switch (backend) {
     case Backend::Vulkan: {
       // vkInstance, device, swapchain, renderer
-      vulkanInstance_.init(window_);
+      vulkanInstance_.init(window_); // IWindow
       device_.init(vulkanInstance_.getInstance(), vulkanInstance_.getSurface());
       swapchain_.init(device_.getPhysicalDevice(), device_,
                       vulkanInstance_.getSurface(), window_);
@@ -90,6 +90,12 @@ private:
   void mainLoop() {
     while (!window_.shouldClose()) {
       window_.pollEvents();
+
+      if (window_.wasResized()) {// glfw window resized, recreate swapchain
+        window_.clearResized();
+        renderer_->recreateSwapChain();
+      }
+
       renderer_->drawFrame();
     }
 
@@ -103,7 +109,7 @@ private:
 };
 
 int main() {
-  HelloTriangleApplication app;
+  Application app;
 
   try {
     app.run();

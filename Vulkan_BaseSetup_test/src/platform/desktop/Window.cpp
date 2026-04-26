@@ -49,3 +49,32 @@ void Window::framebufferResizeCallback(GLFWwindow *window, int width,
     w->framebufferResized_ = true;
   }
 }
+
+std::vector<const char *>
+Window::getRequiredInstanceExtensions(bool enableValidation) const {
+  uint32_t glfwExtensionCount = 0;
+  const char **glfwExtensions =
+      glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+  std::vector<const char *> extensions(glfwExtensions,
+                                       glfwExtensions + glfwExtensionCount);
+
+  // Add portability extensions for MoltenVK on macOS
+#ifdef __APPLE__
+  extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+  extensions.push_back("VK_KHR_get_physical_device_properties2");
+#endif
+
+  if (enableValidation) {
+    extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  }
+  return extensions;
+}
+
+VkSurfaceKHR Window::createSurface(VkInstance instance) const {
+  VkSurfaceKHR surface = VK_NULL_HANDLE;
+  if (glfwCreateWindowSurface(instance, window_, nullptr, &surface) !=
+      VK_SUCCESS) {
+    throw std::runtime_error("failed to create window surface (GLFW)");
+  }
+  return surface;
+}

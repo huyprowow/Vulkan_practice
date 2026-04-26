@@ -1,10 +1,18 @@
 #include "VulkanDevice.hpp"
 #include "../../core/Types.hpp"
 
+// #include <vulkan/vulkan_profiles.hpp>
+
 #include <cstring>
 #include <iostream>
 #include <ranges>
 
+// namespace {
+// const VpProfileProperties kAppProfile{
+//     VP_KHR_ROADMAP_2022_NAME,
+//     VP_KHR_ROADMAP_2022_SPEC_VERSION,
+// };
+// } // namespace
 
 /// Khởi tạo VulkanDevice: chọn physical device và tạo logical device
 void VulkanDevice::init(const vk::raii::Instance &instance,
@@ -121,6 +129,15 @@ void VulkanDevice::pickPhysicalDevice(const vk::raii::Instance &instance,
         });
 
     (void)supportsPresent; // present support is checked in createLogicalDevice
+
+    // VkBool32 profileSupported = VK_FALSE;
+    // VkResult pr =
+    //     vpGetPhysicalDeviceProfileSupport(*instance, // VkInstance
+    //                                       *device,   // VkPhysicalDevice
+    //                                       &kAppProfile, &profileSupported);
+    // if (pr != VK_SUCCESS || profileSupported != VK_TRUE) {
+    //   return false;
+    // }
 
     return supportsVulkan1_3 && supportsGraphics &&
            supportsAllRequiredExtensions && supportsRequiredFeatures;

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="$PROJECT_DIR$/../../../1_DoAn/Nop/University-Graduation-Project" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../1_DoAn/iastore" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../CIS5650_GPU_Programing_and_architecture/Practice/Project0-Getting-Started" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../CIS5650_GPU_Programing_and_architecture/Practice/Project1-CUDA-Flocking" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../DirectX/DirectX-Graphics-Samples" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../MongoCourse/mflix" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../Nvidia/Carla/CarlaUE5" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../Nvidia/Omnniverse/kit-app-template" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../OpenUSD" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../Setup_Teminal_ytb/dotfiles-public" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../Slang/slang" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../Slang/slangcode/slang-basics" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../Slang/slangpy" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../Threejs_Jouney" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../TruyHoiTimKiemThongTin/ecir2022-uqv-sim" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../TruyHoiTimKiemThongTin/ecir2022-uqv-sim/anserini" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../TruyHoiTimKiemThongTin/ecir2022-uqv-sim/anserini/tools" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../.." vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../Vulkan-Tutorial" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../Webpack_demo" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../connerstone_vtk/cornerstone3D" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../vcpkg" vcs="Git" />
+  </component>
+</project>

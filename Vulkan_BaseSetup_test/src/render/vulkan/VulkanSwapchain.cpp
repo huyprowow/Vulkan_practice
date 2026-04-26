@@ -1,16 +1,13 @@
 #include "VulkanSwapchain.hpp"
-#include "../../platform/Window.hpp"
+#include "../../platform/desktop/Window.hpp"
 #include "VulkanDevice.hpp"
 
 #include <cassert>
 
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
-
 /// Khởi tạo swapchain: tạo swap chain và image views
 void VulkanSwapchain::init(const vk::raii::PhysicalDevice &physicalDevice,
                      const VulkanDevice &device, const vk::raii::SurfaceKHR &surface,
-                     const Window &window) {
+                     const IWindow &window) {
   surface_ = &surface;
   createSwapChain(physicalDevice, device, surface,
                   window); // tao swap chain, la mot chuoi cac image de hien thi
@@ -23,7 +20,7 @@ void VulkanSwapchain::init(const vk::raii::PhysicalDevice &physicalDevice,
 void VulkanSwapchain::recreate(const vk::raii::PhysicalDevice &physicalDevice,
                          const VulkanDevice &device,
                          const vk::raii::SurfaceKHR &surface,
-                         const Window &window) {
+                         const IWindow &window) {
   surface_ = &surface;
   cleanup();
   createSwapChain(physicalDevice, device, surface, window);
@@ -39,7 +36,7 @@ void VulkanSwapchain::cleanup() {
 void VulkanSwapchain::createSwapChain(const vk::raii::PhysicalDevice &physicalDevice,
                                 const VulkanDevice &device,
                                 const vk::raii::SurfaceKHR &surface,
-                                const Window &window) {
+                                const IWindow &window) {
   auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
   swapChainSurfaceFormat_ =
       chooseSwapSurfaceFormat(physicalDevice.getSurfaceFormatsKHR(surface));
@@ -86,13 +83,13 @@ vk::SurfaceFormatKHR VulkanSwapchain::chooseSwapSurfaceFormat(
 
 vk::Extent2D
 VulkanSwapchain::chooseSwapExtent(const vk::SurfaceCapabilitiesKHR &capabilities,
-                            const Window &window) const {
+                            const IWindow &window) const {
   if (capabilities.currentExtent.width != 0xFFFFFFFF) {
     return capabilities.currentExtent;
   }
   int width, height;
-  // dùng GLFW trực tiếp theo code gốc
-  glfwGetFramebufferSize(window.getHandle(), &width, &height);
+  // get framebuffer size from window
+  window.getFramebufferSize(width, height);
 
   return {std::clamp<uint32_t>(width, capabilities.minImageExtent.width,
                                capabilities.maxImageExtent.width),

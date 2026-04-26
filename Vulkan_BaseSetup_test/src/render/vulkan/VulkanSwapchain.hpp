@@ -3,18 +3,18 @@
 #include <vector>
 #include <vulkan/vulkan_raii.hpp>
 
-class Window;
+class IWindow;
 class VulkanDevice;
 
 class VulkanSwapchain {
 public:
   void init(const vk::raii::PhysicalDevice &physicalDevice,
             const VulkanDevice &device, const vk::raii::SurfaceKHR &surface,
-            const Window &window);
+            const IWindow &window);
 
   void recreate(const vk::raii::PhysicalDevice &physicalDevice,
                 const VulkanDevice &device, const vk::raii::SurfaceKHR &surface,
-                const Window &window);
+                const IWindow &window);
 
   void cleanup();
 
@@ -49,7 +49,7 @@ private:
   void createSwapChain(const vk::raii::PhysicalDevice &physicalDevice,
                        const VulkanDevice &device,
                        const vk::raii::SurfaceKHR &surface,
-                       const Window &window);
+                       const IWindow &window);
 
   void createImageViews(const VulkanDevice &device);
 
@@ -60,5 +60,5 @@ private:
       const std::vector<vk::PresentModeKHR> &availablePresentModes);
 
   vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR &capabilities,
-                                const Window &window) const;
+                                const IWindow &window) const;
 };

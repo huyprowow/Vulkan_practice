@@ -108,7 +108,7 @@ function(extract_vulkan_version VULKAN_CORE_H_PATH OUTPUT_VERSION_TAG)
 endfunction()
 
 # Determine the Vulkan version to use for Vulkan-Hpp and Vulkan-Profiles
-set(VULKAN_VERSION_TAG "v1.3.275") # Default version
+set(VULKAN_VERSION_TAG "v1.4.317") # Default fallback for NDK 30.0.14904198 rc1 (VK_HEADER_VERSION 317)
 
 # Try to detect the Vulkan version
 set(VULKAN_CORE_H "")

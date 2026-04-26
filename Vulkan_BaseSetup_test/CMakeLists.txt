@@ -19,6 +19,7 @@ find_package(glfw3 REQUIRED)
 find_package(glm REQUIRED)
 find_package(tinyobjloader REQUIRED)
 find_package(Vulkan REQUIRED)
+find_package(VulkanHpp REQUIRED)
 
 if(ENABLE_DX12)
   find_package(directxtk12 CONFIG REQUIRED)
@@ -142,7 +143,7 @@ function(add_to_build CPP_FILE)
   # add files to compile
   target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_sources(${PROJECT_NAME} PRIVATE
-    src/platform/Window.cpp
+    src/platform/desktop/Window.cpp
     src/render/vulkan/VulkanInstance.cpp
     src/render/vulkan/VulkanDevice.cpp
     src/render/vulkan/VulkanSwapchain.cpp

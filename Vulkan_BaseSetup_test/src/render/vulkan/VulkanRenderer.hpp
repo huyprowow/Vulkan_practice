@@ -2,7 +2,7 @@
 
 #include "../../core/IRender.hpp"
 #include "../../core/Types.hpp"
-#include "../../platform/Window.hpp"
+#include "../../platform/IWindow.hpp"
 #include "VulkanDevice.hpp"
 #include "VulkanSwapchain.hpp"
 
@@ -10,9 +10,19 @@
 #include <vector>
 #include <vulkan/vulkan_raii.hpp>
 
+#if defined(__ANDROID__)
+struct AAssetManager;
+#endif
+
 class VulkanRenderer : public IRenderer {
 public:
-  void init(VulkanDevice &device, VulkanSwapchain &swapchain, Window &window);
+  void init(VulkanDevice &device, VulkanSwapchain &swapchain, IWindow &window,
+#if defined(__ANDROID__)
+            AAssetManager *assetManager
+#else
+            void *assetManager = nullptr
+#endif
+  );
   void drawFrame() override;
   void cleanup() override;
   void recreateSwapChain() override; ///< gọi khi swapchain out-of-date
@@ -22,7 +32,12 @@ public:
 private:
   VulkanDevice *device_ = nullptr;
   VulkanSwapchain *swapchain_ = nullptr;
-  Window *window_ = nullptr;
+  IWindow *window_ = nullptr;
+
+#if defined(__ANDROID__)
+  AAssetManager *assetManager_ = nullptr;
+#endif
+
   const vk::raii::SurfaceKHR *surface_ = nullptr;
 
   vk::raii::DescriptorSetLayout descriptorSetLayout_{nullptr};
@@ -94,16 +109,20 @@ private:
   void createGraphicsPipeline();
   [[nodiscard]] vk::raii::ShaderModule
   createShaderModule(const std::vector<char> &code) const;
-  static std::vector<char> readFile(const std::string &filename);
+  static std::vector<char> readFile(const std::string &filename
+#if defined(__ANDROID__)
+                                    ,
+                                    AAssetManager *assetManager
+#endif
+  );
 
   void createCommandPool();
   void createCommandBuffers();
   void recordCommandBuffer(uint32_t imageIndex);
 
   void createImage(uint32_t width, uint32_t height, uint32_t mipLevels,
-                   vk::SampleCountFlagBits numSamples,
-                   vk::Format format, vk::ImageTiling tiling,
-                   vk::ImageUsageFlags usage,
+                   vk::SampleCountFlagBits numSamples, vk::Format format,
+                   vk::ImageTiling tiling, vk::ImageUsageFlags usage,
                    vk::MemoryPropertyFlags properties, vk::raii::Image &image,
                    vk::raii::DeviceMemory &imageMemory);
 
@@ -171,7 +190,7 @@ private:
   void createParticleGraphicsPipeline();
   void createComputeDescriptorSets();
   void createComputeCommandBuffers();
-  
+
   void recordComputeCommandBuffer();
   void updateComputeUniformBuffer(uint32_t currentFrame);
 };
