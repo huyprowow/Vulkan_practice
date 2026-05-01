@@ -130,4 +130,4 @@ got 2 entry point for android and desktop
 shader code share cross platform in `shaders` folder, Compile shader when cmake build, (android: after cmake build shader, build tool link/map to apk resource), then read shader built for each platform
 
 cmake manager, find lib and install from git if fallback
-game_activity_bridge.cpp not use, `use android_native_app_glue.c`,`android_native_app_glue.h` for ndk version installed `30.0.14904198 rc1`
+game_activity_bridge.cpp not use, use `android_native_app_glue.c`,`android_native_app_glue.h` for ndk version installed `30.0.14904198 rc1`

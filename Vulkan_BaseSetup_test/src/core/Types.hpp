@@ -26,6 +26,7 @@
 
 #include <vulkan/vk_platform.h>
 #include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
 
 constexpr uint32_t WIDTH = 800;
 constexpr uint32_t HEIGHT = 600;
@@ -34,8 +35,10 @@ constexpr uint32_t PARTICLE_COUNT =
           // INVOCATIONS_SIZE de lay so work group x
 constexpr uint32_t INVOCATIONS_SIZE =
     256; // invocations trong 1 work group( dinh nghia trong shader compute )
-const std::string MODEL_PATH = "models/viking_room.obj";
-const std::string TEXTURE_PATH = "textures/viking_room.png";
+const std::string MODEL_PATH = "models/viking_room.glb";
+const std::string TEXTURE_PATH = "textures/viking_room.ktx2";
+// Define the number of objects to render
+constexpr int MAX_OBJECTS = 3;
 
 // Validation layers co the quan li bang vulkanconfig thay cho hard-coded o day
 // (cai vulkan configurator (GUI) roi chinh hoang chinh bang vkconfig.exe)
@@ -97,6 +100,33 @@ struct UniformBufferObject {
   alignas(16) glm::mat4 model;
   alignas(16) glm::mat4 view;
   alignas(16) glm::mat4 proj;
+};
+
+// Define a structure to hold per-object data
+struct GameObject {
+  // Transform properties
+  glm::vec3 position = {0.0f, 0.0f, 0.0f};
+  glm::vec3 rotation = {0.0f, 0.0f, 0.0f};
+  glm::vec3 scale = {1.0f, 1.0f, 1.0f};
+
+  // Uniform buffer for this object (one per frame in flight)
+  std::vector<vk::raii::Buffer> uniformBuffers;
+  std::vector<vk::raii::DeviceMemory> uniformBuffersMemory;
+  std::vector<void *> uniformBuffersMapped;
+
+  // Descriptor sets for this object (one per frame in flight)
+  std::vector<vk::raii::DescriptorSet> descriptorSets;
+
+  // Calculate model matrix based on position, rotation, and scale
+  glm::mat4 getModelMatrix() const {
+    glm::mat4 model = glm::mat4(1.0f);
+    model = glm::translate(model, position);
+    model = glm::rotate(model, rotation.x, glm::vec3(1.0f, 0.0f, 0.0f));
+    model = glm::rotate(model, rotation.y, glm::vec3(0.0f, 1.0f, 0.0f));
+    model = glm::rotate(model, rotation.z, glm::vec3(0.0f, 0.0f, 1.0f));
+    model = glm::scale(model, scale);
+    return model;
+  }
 };
 
 // struc cho 1 hạt particle

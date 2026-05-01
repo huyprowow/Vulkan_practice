@@ -2,11 +2,7 @@
 #include "../../core/Types.hpp"
 #include "VulkanSwapchain.hpp"
 
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
-
-#define TINYOBJLOADER_IMPLEMENTATION
-#include <tiny_obj_loader.h>
+#include <ktx.h>
 
 #include <chrono>
 #include <fstream>
@@ -35,7 +31,7 @@ void VulkanRenderer::init(VulkanDevice &device, VulkanSwapchain &swapchain,
   device_ = &device;
   swapchain_ = &swapchain;
   window_ = &window;
-
+  memory_ = std::make_unique<VulkanMemory>(*device_, commandPool_);
 #if defined(__ANDROID__)
   assetManager_ = assetManager;
 #endif
@@ -43,38 +39,45 @@ void VulkanRenderer::init(VulkanDevice &device, VulkanSwapchain &swapchain,
   surface_ = &swapchain_->getSurface();
 
   createDescriptorSetLayout(); // layout descriptor de bind cac uniform vao
-                               // pipeline
-  createComputeDescriptorSetLayout(); // tao descriptor set layout cho compute
-                                      // shader
-  createGraphicsPipeline();           // tao pipeline de render
-  createComputePipeline();            // tao pipeline cho compute shader
-  createParticleGraphicsPipeline();   // tao pipeline ve particle
-  createCommandPool();                // tao command pool luu cac command buffer
-  createColorResources();             // multi-sampled color buffer
-  createDepthResources();             // depth buffer
-  createTextureImage(); // tao texture image, tai image len gpu de toi uu (neu
-                        // k no doc PCI -> cham), chuyen layout
-  createTextureImageView(); // tao image view cho texture image
-  createTextureSampler();   // tao sampler cho texture image (truy cap image
-                            // thong qua sampler de ap dung cac phep bien doi
-                            // (mipmap, filter,...))
-  loadModel();
-  createVertexBuffer();   // tao vertex buffer luu cac vertex data
-  createIndexBuffer();    // tao index buffer luu cac index data (tranh ve trung
-                          // dinh)
-  createUniformBuffers(); // uniform
-  createComputeUniformBuffers(); // tao UBO cho compute shader
-  createShaderStorageBuffers();  // tao SSBO cho particle
+  // pipeline
+  createGraphicsPipeline(); // tao pipeline de render
+  createCommandPool();      // tao command pool luu cac command buffer
+  texture_.init(*device_, *memory_, *swapchain_, TEXTURE_PATH
+#if defined(__ANDROID__)
+                ,
+                assetManager_
+#endif
+  );
+
+  model_.load(*device_, *memory_, MODEL_PATH
+#if defined(__ANDROID__)
+              ,
+              assetManager_
+#endif
+  );
+  
+  setupGameObjects();
+  createUniformBuffers(); // uniform cho mỗi gameObject
   createDescriptorPool(); // tao descriptor pool luu cac descriptor set (1:n -
-                          // pool:set)
+  // pool:set)
   createDescriptorSets(); // 1:1 - descriptor set: buffer resoure
   createCommandBuffers(); // tao command buffer luu cac command
-  createComputeDescriptorSets(); // tao descriptor set cho compute shader
-  createComputeCommandBuffers(); // tao command buffer cho compute shader
+
   createSyncObjects(); // dong bo ( semaphore cho swapchain (chan gpu tranh
                        // xung dot- xac dinh thu tu thao tac), fence cho viec
                        // render chi 1 khung hinh tai 1 thoi diem giu gpu cpu
                        // dong bo)
+
+  //init particle system
+  auto computeSpv = readFile("shaders/compute.spv"
+#if defined(__ANDROID__)
+                             ,
+                             assetManager_
+#endif
+  );
+  particleSystem_.init(*device_, *memory_, commandPool_,
+                       swapchain_->getImageFormat(), texture_.getDepthFormat(),
+                       device_->msaaSamples_, computeSpv);
 }
 
 void VulkanRenderer::createDescriptorSetLayout() {
@@ -134,11 +137,7 @@ void VulkanRenderer::createGraphicsPipeline() {
       .rasterizerDiscardEnable = vk::False,
       .polygonMode = vk::PolygonMode::eFill,
       .cullMode = vk::CullModeFlagBits::eBack,
-      .frontFace =
-          vk::FrontFace::eCounterClockwise, // project matrix lat y nen doi
-                                            // lai huong clockwise check tranh
-                                            // mat sau bi loai bo (backface
-                                            // culling)
+      .frontFace = vk::FrontFace::eCounterClockwise,
       .depthBiasEnable = vk::False,
       .depthBiasSlopeFactor = 1.0f,
       .lineWidth = 1.0f};
@@ -183,7 +182,7 @@ void VulkanRenderer::createGraphicsPipeline() {
 
   // render pass
   // dynamic render: dinh dang cac tep dinh kem sd khi render
-  vk::Format depthFormat = findDepthFormat();
+  vk::Format depthFormat = texture_.findDepthFormat(*device_);
 
   vk::Format colorFormat = swapchain_->getImageFormat();
   vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{
@@ -274,31 +273,6 @@ void VulkanRenderer::createCommandPool() {
   commandPool_ = vk::raii::CommandPool(device_->getDevice(), poolInfo);
 }
 
-vk::raii::CommandBuffer VulkanRenderer::beginSingleTimeCommands() {
-  vk::CommandBufferAllocateInfo allocInfo{.commandPool = commandPool_,
-                                          .level =
-                                              vk::CommandBufferLevel::ePrimary,
-                                          .commandBufferCount = 1};
-  vk::raii::CommandBuffer commandBuffer =
-      std::move(device_->getDevice().allocateCommandBuffers(allocInfo).front());
-
-  vk::CommandBufferBeginInfo beginInfo{
-      .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit};
-  commandBuffer.begin(beginInfo);
-
-  return commandBuffer;
-}
-
-void VulkanRenderer::endSingleTimeCommands(
-    vk::raii::CommandBuffer &commandBuffer) {
-  commandBuffer.end();
-
-  vk::SubmitInfo submitInfo{.commandBufferCount = 1,
-                            .pCommandBuffers = &*commandBuffer};
-  device_->getGraphicsQueue().submit(submitInfo, nullptr);
-  device_->getGraphicsQueue().waitIdle();
-}
-
 void VulkanRenderer::createCommandBuffers() {
   commandBuffers_.clear();
   vk::CommandBufferAllocateInfo allocInfo{
@@ -325,14 +299,14 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
       vk::PipelineStageFlagBits2::eColorAttachmentOutput, // dstStage
       vk::ImageAspectFlagBits::eColor, 1);
   // transition for the MSAA color image
-  transition_image_layout(*colorImage_, vk::ImageLayout::eUndefined,
+  transition_image_layout(*texture_.getColorImage(), vk::ImageLayout::eUndefined,
                           vk::ImageLayout::eColorAttachmentOptimal, {},
                           vk::AccessFlagBits2::eColorAttachmentWrite,
                           vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                           vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                           vk::ImageAspectFlagBits::eColor, 1);
   // transition for the depth image
-  transition_image_layout(*depthImage_, vk::ImageLayout::eUndefined,
+  transition_image_layout(*texture_.getDepthImage(), vk::ImageLayout::eUndefined,
                           vk::ImageLayout::eDepthAttachmentOptimal,
                           vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
                           vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
@@ -344,7 +318,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
   vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
   vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
   vk::RenderingAttachmentInfo attachmentInfo = {
-      .imageView = colorImageView_,
+      .imageView = texture_.getColorView(),
       .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
       .resolveMode = vk::ResolveModeFlagBits::eAverage,
       .resolveImageView = swapchain_->getImageViews()[imageIndex],
@@ -355,7 +329,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
   };
 
   vk::RenderingAttachmentInfo depthAttachmentInfo = {
-      .imageView = depthImageView_,
+      .imageView = texture_.getDepthView(),
       .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
       .loadOp = vk::AttachmentLoadOp::eClear,
       .storeOp = vk::AttachmentStoreOp::eDontCare,
@@ -370,30 +344,27 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
   };
 
   commandBuffer.beginRendering(renderingInfo);
-  // VẼ MODEL
+  // VẼ MULTIPLE OBJECTS — mới
   commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics,
-                             *graphicsPipeline_);
-  commandBuffer.setViewport(
+    *graphicsPipeline_);
+    
+    commandBuffer.setViewport(
       0, vk::Viewport(
-             0.0f, 0.0f, static_cast<float>(swapchain_->getExtent().width),
+        0.0f, 0.0f, static_cast<float>(swapchain_->getExtent().width),
              static_cast<float>(swapchain_->getExtent().height), 0.0f, 1.0f));
   commandBuffer.setScissor(
-      0, vk::Rect2D(vk::Offset2D(0, 0), swapchain_->getExtent()));
-  commandBuffer.bindVertexBuffers(0, *vertexBuffer_, {0});
-  commandBuffer.bindIndexBuffer(*indexBuffer_, 0, vk::IndexType::eUint32);
-  commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-                                   pipelineLayout_, 0,
-                                   *descriptorSets_[frameIndex_], nullptr);
-  commandBuffer.drawIndexed(
-      indices_.size(), 1, 0, 0,
-      0); //(index count, instance count, offset index buffer, offset vertex
-          // before indexing to vertex buffer, offset for instancing)
-
-  // VẼ PARTICLES (2d nen tat depth test, ve sau luon de len model)
-  commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics,
-                             *particlePipeline_);
-  commandBuffer.bindVertexBuffers(0, *shaderStorageBuffers_[frameIndex_], {0});
-  commandBuffer.draw(PARTICLE_COUNT, 1, 0, 0);
+    0, vk::Rect2D(vk::Offset2D(0, 0), swapchain_->getExtent()));
+    // Bind vertex/index buffer 1 lần (chia sẻ giữa các objects)
+  model_.bind(commandBuffer);
+  // Loop draw từng object
+  for (auto &obj : gameObjects_) {
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
+      pipelineLayout_, 0,
+      *obj.descriptorSets[frameIndex_], nullptr);
+      commandBuffer.drawIndexed(model_.getIndexCount(), 1, 0, 0, 0);
+    }
+    // VẼ PARTICLE SYSTEM
+    particleSystem_.recordDraw(commandBuffer, frameIndex_);
   commandBuffer.endRendering();
   // After rendering, transition the swapchain image to PRESENT_SRC
   transition_image_layout(
@@ -405,50 +376,6 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
       vk::PipelineStageFlagBits2::eBottomOfPipe,          // dstStage
       vk::ImageAspectFlagBits::eColor, 1);
   commandBuffer.end();
-}
-
-/// Chuyển đổi layout image bằng pipeline barrier (dùng cho texture upload)
-void VulkanRenderer::transitionImageLayout(const vk::raii::Image &image,
-                                           vk::ImageLayout oldLayout,
-                                           vk::ImageLayout newLayout,
-                                           uint32_t mipLevels) {
-  // vk cho phep chuyen doi bo cuc toi uu cho tung nhiem vu
-  auto commandBuffer = beginSingleTimeCommands();
-
-  vk::ImageMemoryBarrier barrier{
-      .oldLayout = oldLayout,
-      .newLayout = newLayout,
-      .image = *image, // dereference RAII image -> raw VkImage
-      .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0,
-                           mipLevels, // levelCount
-                           0, 1}};
-
-  // 0 xd -> transfer dst: thao tac ghi k can cho
-  // transfer dst -> shader read: doc shader can cho ghi dl transfer xong
-  vk::PipelineStageFlags sourceStage;
-  vk::PipelineStageFlags destinationStage;
-
-  if (oldLayout == vk::ImageLayout::eUndefined &&
-      newLayout == vk::ImageLayout::eTransferDstOptimal) {
-    barrier.srcAccessMask = {};
-    barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
-
-    sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
-    destinationStage = vk::PipelineStageFlagBits::eTransfer;
-  } else if (oldLayout == vk::ImageLayout::eTransferDstOptimal &&
-             newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
-    barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
-    barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-
-    sourceStage = vk::PipelineStageFlagBits::eTransfer;
-    destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
-  } else {
-    throw std::invalid_argument("unsupported layout transition!");
-  }
-
-  commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, {}, nullptr,
-                                barrier);
-  endSingleTimeCommands(commandBuffer);
 }
 
 /// Chuyển đổi layout image bằng VkImageMemoryBarrier2 (Vulkan 1.3
@@ -495,449 +422,140 @@ void VulkanRenderer::createSyncObjects() {
         device_->getDevice(),
         vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
   }
-
-  // sync objects cho compute shader
-  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-    computeFinishedSemaphores_.emplace_back(device_->getDevice(),
-                                            vk::SemaphoreCreateInfo());
-    computeInFlightFences_.emplace_back(
-        device_->getDevice(),
-        vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
-  }
-}
-
-void VulkanRenderer::createImage(uint32_t width, uint32_t height,
-                                 uint32_t mipLevels,
-                                 vk::SampleCountFlagBits numSamples,
-                                 vk::Format format, vk::ImageTiling tiling,
-                                 vk::ImageUsageFlags usage,
-                                 vk::MemoryPropertyFlags properties,
-                                 vk::raii::Image &image,
-                                 vk::raii::DeviceMemory &imageMemory) {
-  vk::ImageCreateInfo imageInfo{.imageType = vk::ImageType::e2D,
-                                .format = format,
-                                .extent = {width, height, 1},
-                                .mipLevels = mipLevels,
-                                .arrayLayers = 1,
-                                .samples = numSamples,
-                                .tiling = tiling,
-                                .usage = usage,
-                                .sharingMode = vk::SharingMode::eExclusive};
-
-  image = vk::raii::Image(device_->getDevice(), imageInfo);
-
-  vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
-  vk::MemoryAllocateInfo allocInfo{
-      .allocationSize = memRequirements.size,
-      .memoryTypeIndex =
-          findMemoryType(memRequirements.memoryTypeBits, properties)};
-  imageMemory = vk::raii::DeviceMemory(device_->getDevice(), allocInfo);
-  image.bindMemory(imageMemory, 0);
-}
-
-void VulkanRenderer::createColorResources() {
-  vk::Format colorFormat = swapchain_->getImageFormat();
-  vk::Extent2D swapChainExtent = swapchain_->getExtent();
-
-  createImage(swapChainExtent.width, swapChainExtent.height, 1,
-              device_->msaaSamples_, colorFormat, vk::ImageTiling::eOptimal,
-              vk::ImageUsageFlagBits::eTransientAttachment |
-                  vk::ImageUsageFlagBits::eColorAttachment,
-              vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage_,
-              colorImageMemory_);
-  colorImageView_ = createImageView(colorImage_, colorFormat,
-                                    vk::ImageAspectFlagBits::eColor, 1);
-}
-
-void VulkanRenderer::createDepthResources() {
-  vk::Format depthFormat = findDepthFormat();
-  vk::Extent2D swapChainExtent = swapchain_->getExtent();
-  createImage(swapChainExtent.width, swapChainExtent.height, 1,
-              device_->msaaSamples_, depthFormat, vk::ImageTiling::eOptimal,
-              vk::ImageUsageFlagBits::eDepthStencilAttachment,
-              vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage_,
-              depthImageMemory_);
-  depthImageView_ = createImageView(depthImage_, depthFormat,
-                                    vk::ImageAspectFlagBits::eDepth, 1);
-}
-
-vk::Format
-VulkanRenderer::findSupportedFormat(const std::vector<vk::Format> &candidates,
-                                    vk::ImageTiling tiling,
-                                    vk::FormatFeatureFlags features) {
-  for (const auto format : candidates) {
-    vk::FormatProperties props =
-        device_->getPhysicalDevice().getFormatProperties(format);
-    if (tiling == vk::ImageTiling::eLinear &&
-        (props.linearTilingFeatures & features) == features) {
-      return format;
-    }
-    if (tiling == vk::ImageTiling::eOptimal &&
-        (props.optimalTilingFeatures & features) == features) {
-      return format;
-    }
-  }
-
-  throw std::runtime_error("failed to find supported format!");
-}
-
-vk::Format VulkanRenderer::findDepthFormat() {
-  return findSupportedFormat(
-      {vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint,
-       vk::Format::eD24UnormS8Uint},
-      vk::ImageTiling::eOptimal,
-      vk::FormatFeatureFlagBits::eDepthStencilAttachment);
-}
-
-bool VulkanRenderer::hasStencilComponent(vk::Format format) {
-  return format == vk::Format::eD32SfloatS8Uint ||
-         format == vk::Format::eD24UnormS8Uint;
-}
-
-uint32_t VulkanRenderer::findMemoryType(uint32_t typeFilter,
-                                        vk::MemoryPropertyFlags properties) {
-  vk::PhysicalDeviceMemoryProperties memProperties =
-      device_->getPhysicalDevice().getMemoryProperties();
-
-  for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-    if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags &
-                                    properties) == properties) {
-      return i;
-    }
-  }
-
-  throw std::runtime_error("failed to find suitable memory type!");
-}
-
-/// Tải texture image lên GPU qua staging buffer, tạo mipmaps
-void VulkanRenderer::createTextureImage() {
-  // load anh
-  int texWidth, texHeight, texChannels;
-  stbi_uc *pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight,
-                              &texChannels, STBI_rgb_alpha);
-  vk::DeviceSize imageSize = texWidth * texHeight * 4;
-  mipLevels_ = static_cast<uint32_t>(
-                   std::floor(std::log2(std::max(texWidth, texHeight)))) +
-               1;
-
-  if (!pixels) {
-    throw std::runtime_error("failed to load texture image!");
-  }
-  // staging buffer tai anh len gpu
-  vk::raii::Buffer stagingBuffer({});             // local RAII buffer
-  vk::raii::DeviceMemory stagingBufferMemory({}); // local RAII memory
-  createBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc,
-               vk::MemoryPropertyFlagBits::eHostVisible |
-                   vk::MemoryPropertyFlagBits::eHostCoherent,
-               stagingBuffer, stagingBufferMemory);
-  void *data = stagingBufferMemory.mapMemory(0, imageSize);
-  std::memcpy(data, pixels, static_cast<size_t>(imageSize));
-  stagingBufferMemory.unmapMemory();
-  stbi_image_free(pixels);
-
-  vk::raii::Image textureImageTemp({});              // temp RAII image
-  vk::raii::DeviceMemory textureImageMemoryTemp({}); // temp RAII memory
-  createImage(texWidth, texHeight, mipLevels_, vk::SampleCountFlagBits::e1,
-              vk::Format::eR8G8B8A8Srgb, vk::ImageTiling::eOptimal,
-              vk::ImageUsageFlagBits::eTransferSrc |
-                  vk::ImageUsageFlagBits::eTransferDst |
-                  vk::ImageUsageFlagBits::eSampled,
-              vk::MemoryPropertyFlagBits::eDeviceLocal, textureImageTemp,
-              textureImageMemoryTemp);
-  // Assign to class members
-  textureImage_ = std::move(textureImageTemp);
-  textureImageMemory_ = std::move(textureImageMemoryTemp);
-
-  transitionImageLayout(textureImage_, vk::ImageLayout::eUndefined,
-                        vk::ImageLayout::eTransferDstOptimal,
-                        mipLevels_); // chuyen layout toi uu nhan dl
-                                     // (ghi)
-  copyBufferToImage(stagingBuffer, textureImage_,
-                    static_cast<uint32_t>(texWidth),
-                    static_cast<uint32_t>(texHeight));
-  // transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while generating
-  // mipmaps
-  // note: thuc te nen tao mipmap truoc roi load vao chu k tao khi chay
-  generateMipmaps(textureImage_, vk::Format::eR8G8B8A8Srgb, texWidth, texHeight,
-                  mipLevels_);
 }
 
 /// Tạo mipmap bằng vkCmdBlitImage, chia đôi kích thước mỗi level
-void VulkanRenderer::generateMipmaps(vk::raii::Image &image,
-                                     vk::Format imageFormat, int32_t texWidth,
-                                     int32_t texHeight, uint32_t mipLevels) {
-  // goi vkCmdBlitImage nhieu lan de sao chep du lieu vao tung cap do
-  // cua texture mipmap (dung nhu LOD) nhung k dam bao tat ca nen tang (yeu
-  // cau phai ho tro loc tuyen tinh)
+// void VulkanRenderer::generateMipmaps(vk::raii::Image &image,
+//                                      vk::Format imageFormat, int32_t
+//                                      texWidth, int32_t texHeight, uint32_t
+//                                      mipLevels) {
+//   // goi vkCmdBlitImage nhieu lan de sao chep du lieu vao tung cap do
+//   // cua texture mipmap (dung nhu LOD) nhung k dam bao tat ca nen tang (yeu
+//   // cau phai ho tro loc tuyen tinh)
 
-  // Check if image format supports linear blit-ing
-  vk::FormatProperties formatProperties =
-      device_->getPhysicalDevice().getFormatProperties(imageFormat);
+//   // Check if image format supports linear blit-ing
+//   vk::FormatProperties formatProperties =
+//       device_->getPhysicalDevice().getFormatProperties(imageFormat);
 
-  if (!(formatProperties.optimalTilingFeatures &
-        vk::FormatFeatureFlagBits::eSampledImageFilterLinear)) {
-    throw std::runtime_error(
-        "texture image format does not support linear blitting!");
-  }
-  vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands();
+//   if (!(formatProperties.optimalTilingFeatures &
+//         vk::FormatFeatureFlagBits::eSampledImageFilterLinear)) {
+//     throw std::runtime_error(
+//         "texture image format does not support linear blitting!");
+//   }
+//   vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands();
 
-  vk::ImageMemoryBarrier barrier = {
-      .srcAccessMask = vk::AccessFlagBits::eTransferWrite,
-      .dstAccessMask = vk::AccessFlagBits::eTransferRead,
-      .oldLayout = vk::ImageLayout::eTransferDstOptimal,
-      .newLayout = vk::ImageLayout::eTransferSrcOptimal,
-      .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-      .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-      .image = image};
-  barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-  barrier.subresourceRange.baseArrayLayer = 0;
-  barrier.subresourceRange.layerCount = 1;
-  barrier.subresourceRange.levelCount = 1;
+//   vk::ImageMemoryBarrier barrier = {
+//       .srcAccessMask = vk::AccessFlagBits::eTransferWrite,
+//       .dstAccessMask = vk::AccessFlagBits::eTransferRead,
+//       .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+//       .newLayout = vk::ImageLayout::eTransferSrcOptimal,
+//       .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+//       .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+//       .image = image};
+//   barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+//   barrier.subresourceRange.baseArrayLayer = 0;
+//   barrier.subresourceRange.layerCount = 1;
+//   barrier.subresourceRange.levelCount = 1;
 
-  // tao mip map, chuyen doi layout moi level (chuyen lai layout toi uu cho
-  // shader doc hoac layout de sao chep), chia doi kich thuoc mip map
-  int32_t mipWidth = texWidth;
-  int32_t mipHeight = texHeight;
+//   // tao mip map, chuyen doi layout moi level (chuyen lai layout toi uu cho
+//   // shader doc hoac layout de sao chep), chia doi kich thuoc mip map
+//   int32_t mipWidth = texWidth;
+//   int32_t mipHeight = texHeight;
 
-  for (uint32_t i = 1; i < mipLevels; i++) {
-    // chuyen doi i - 1 sang VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
-    barrier.subresourceRange.baseMipLevel = i - 1;
-    barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
-    barrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
-    barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
-    barrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+//   for (uint32_t i = 1; i < mipLevels; i++) {
+//     // chuyen doi i - 1 sang VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+//     barrier.subresourceRange.baseMipLevel = i - 1;
+//     barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+//     barrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+//     barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+//     barrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
 
-    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
-                                  vk::PipelineStageFlagBits::eTransfer, {}, {},
-                                  {}, barrier);
+//     commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+//                                   vk::PipelineStageFlagBits::eTransfer, {},
+//                                   {},
+//                                   {}, barrier);
 
-    // chi dinh vung duoc sd trong thao tac sao chep (blit) (xac dinh kich
-    // thuoc region blit)
-    vk::ArrayWrapper1D<vk::Offset3D, 2> offsets, dstOffsets;
-    offsets[0] = vk::Offset3D(0, 0, 0);
-    offsets[1] = vk::Offset3D(mipWidth, mipHeight, 1);
-    dstOffsets[0] = vk::Offset3D(0, 0, 0);
-    dstOffsets[1] = vk::Offset3D(mipWidth > 1 ? mipWidth / 2 : 1,
-                                 mipHeight > 1 ? mipHeight / 2 : 1, 1);
-    vk::ImageBlit blit = {.srcSubresource = {},
-                          .srcOffsets = offsets,
-                          .dstSubresource = {},
-                          .dstOffsets = dstOffsets};
-    blit.srcSubresource = vk::ImageSubresourceLayers(
-        vk::ImageAspectFlagBits::eColor, i - 1, 0, 1);
-    blit.dstSubresource =
-        vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, i, 0, 1);
-    // ghi lenh len command buffer
-    commandBuffer.blitImage(image, vk::ImageLayout::eTransferSrcOptimal, image,
-                            vk::ImageLayout::eTransferDstOptimal, {blit},
-                            vk::Filter::eLinear);
+//     // chi dinh vung duoc sd trong thao tac sao chep (blit) (xac dinh kich
+//     // thuoc region blit)
+//     vk::ArrayWrapper1D<vk::Offset3D, 2> offsets, dstOffsets;
+//     offsets[0] = vk::Offset3D(0, 0, 0);
+//     offsets[1] = vk::Offset3D(mipWidth, mipHeight, 1);
+//     dstOffsets[0] = vk::Offset3D(0, 0, 0);
+//     dstOffsets[1] = vk::Offset3D(mipWidth > 1 ? mipWidth / 2 : 1,
+//                                  mipHeight > 1 ? mipHeight / 2 : 1, 1);
+//     vk::ImageBlit blit = {.srcSubresource = {},
+//                           .srcOffsets = offsets,
+//                           .dstSubresource = {},
+//                           .dstOffsets = dstOffsets};
+//     blit.srcSubresource = vk::ImageSubresourceLayers(
+//         vk::ImageAspectFlagBits::eColor, i - 1, 0, 1);
+//     blit.dstSubresource =
+//         vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, i, 0, 1);
+//     // ghi lenh len command buffer
+//     commandBuffer.blitImage(image, vk::ImageLayout::eTransferSrcOptimal,
+//     image,
+//                             vk::ImageLayout::eTransferDstOptimal, {blit},
+//                             vk::Filter::eLinear);
 
-    // chuyen doi muc mip i - 1 sang VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-    barrier.oldLayout = vk::ImageLayout::eTransferSrcOptimal;
-    barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-    barrier.srcAccessMask = vk::AccessFlagBits::eTransferRead;
-    barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+//     // chuyen doi muc mip i - 1 sang VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+//     barrier.oldLayout = vk::ImageLayout::eTransferSrcOptimal;
+//     barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+//     barrier.srcAccessMask = vk::AccessFlagBits::eTransferRead;
+//     barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
 
-    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
-                                  vk::PipelineStageFlagBits::eFragmentShader,
-                                  {}, {}, {}, barrier);
+//     commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+//                                   vk::PipelineStageFlagBits::eFragmentShader,
+//                                   {}, {}, {}, barrier);
 
-    // chia doi kich thuoc mip map hien tai, kiem tra kich thuoc khac 0 (k
-    // phai hinh vuong)
-    if (mipWidth > 1)
-      mipWidth /= 2;
-    if (mipHeight > 1)
-      mipHeight /= 2;
-  }
+//     // chia doi kich thuoc mip map hien tai, kiem tra kich thuoc khac 0 (k
+//     // phai hinh vuong)
+//     if (mipWidth > 1)
+//       mipWidth /= 2;
+//     if (mipHeight > 1)
+//       mipHeight /= 2;
+//   }
 
-  // chuyen mip cuoi cung tu VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ->
-  // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-  barrier.subresourceRange.baseMipLevel = mipLevels - 1;
-  barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
-  barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-  barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
-  barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+//   // chuyen mip cuoi cung tu VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ->
+//   // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+//   barrier.subresourceRange.baseMipLevel = mipLevels - 1;
+//   barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+//   barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+//   barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+//   barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
 
-  commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
-                                vk::PipelineStageFlagBits::eFragmentShader, {},
-                                {}, {}, barrier);
+//   commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+//                                 vk::PipelineStageFlagBits::eFragmentShader,
+//                                 {},
+//                                 {}, {}, barrier);
 
-  endSingleTimeCommands(commandBuffer);
-}
+//   endSingleTimeCommands(commandBuffer);
+// }
 
-/// Overload for RAII images
-/// de su dung cho texture image no dung vk::raii::Image nen phai nap chong
-vk::raii::ImageView
-VulkanRenderer::createImageView(const vk::raii::Image &image, vk::Format format,
-                                vk::ImageAspectFlags aspectFlags,
-                                uint32_t mipLevels) {
-  vk::ImageViewCreateInfo viewInfo{.image = *image,
-                                   .viewType = vk::ImageViewType::e2D,
-                                   .format = format,
-                                   .subresourceRange = {aspectFlags, 0,
-                                                        mipLevels, // levelCount
-                                                        0, 1}};
-  return vk::raii::ImageView(device_->getDevice(), viewInfo);
-}
-
-void VulkanRenderer::createTextureImageView() {
-  textureImageView_ =
-      createImageView(textureImage_, vk::Format::eR8G8B8A8Srgb,
-                      vk::ImageAspectFlagBits::eColor, mipLevels_);
-}
-
-/// Tạo sampler cho texture: filter, mipmap mode, anisotropy
-void VulkanRenderer::createTextureSampler() {
-  // sampler kiem soat dl doc, muc mipmap, filer,...
-  vk::PhysicalDeviceProperties properties =
-      device_->getPhysicalDevice().getProperties();
-  vk::SamplerCreateInfo samplerInfo{
-      .magFilter = vk::Filter::eLinear, // gan camera dung cai nay
-      .minFilter = vk::Filter::eLinear, // xa camera dung cai nay
-      .mipmapMode =
-          vk::SamplerMipmapMode::eLinear, // linear select 2mip interpolation
-                                          // between mipmaps, nearest lod
-                                          // selection mip
-      .addressModeU = vk::SamplerAddressMode::eRepeat,
-      .addressModeV = vk::SamplerAddressMode::eRepeat,
-      .addressModeW = vk::SamplerAddressMode::eRepeat,
-      .mipLodBias =
-          0.0f, // lod khong am, va chi bang 0 khi o gan camera.
-                // mipLodBias cho phep buoc Vulkan su dung gia tri
-                // thap hon lod va level so voi gia tri ma no thuong su dung
-      .anisotropyEnable = vk::True,
-      .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
-      .compareEnable = vk::False,
-      .compareOp = vk::CompareOp::eAlways,
-      .minLod = 0.0f,            // dat muc mipmap thap nhat
-      .maxLod = vk::LodClampNone // khong gioi han muc mipmap dam bao toan bo
-                                 // pv mip dc dung
-  };
-  samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
-  samplerInfo.unnormalizedCoordinates = vk::False;
-  // samplerInfo.minLod = static_cast<float>(mipLevels_ / 2); //test mip
-
-  textureSampler_ = vk::raii::Sampler(device_->getDevice(), samplerInfo);
-}
-
-void VulkanRenderer::createBuffer(vk::DeviceSize size,
-                                  vk::BufferUsageFlags usage,
-                                  vk::MemoryPropertyFlags properties,
-                                  vk::raii::Buffer &buffer,
-                                  vk::raii::DeviceMemory &bufferMemory) {
-  vk::BufferCreateInfo bufferInfo{
-      .size = size, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
-  buffer = vk::raii::Buffer(device_->getDevice(), bufferInfo);
-  vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
-  vk::MemoryAllocateInfo allocInfo{
-      .allocationSize = memRequirements.size,
-      .memoryTypeIndex =
-          findMemoryType(memRequirements.memoryTypeBits, properties)};
-  bufferMemory = vk::raii::DeviceMemory(device_->getDevice(), allocInfo);
-  buffer.bindMemory(*bufferMemory, 0);
-}
-
-void VulkanRenderer::copyBuffer(vk::raii::Buffer &srcBuffer,
-                                vk::raii::Buffer &dstBuffer,
-                                vk::DeviceSize size) {
-  vk::raii::CommandBuffer commandCopyBuffer = beginSingleTimeCommands();
-  commandCopyBuffer.copyBuffer(srcBuffer, dstBuffer,
-                               vk::BufferCopy(0, 0, size));
-  endSingleTimeCommands(commandCopyBuffer);
-}
-
-void VulkanRenderer::copyBufferToImage(const vk::raii::Buffer &buffer,
-                                       vk::raii::Image &image, uint32_t width,
-                                       uint32_t height) {
-  vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands();
-  vk::BufferImageCopy region{
-      .bufferOffset = 0,
-      .bufferRowLength = 0,
-      .bufferImageHeight = 0,
-      .imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-      .imageOffset = {0, 0, 0},
-      .imageExtent = {width, height, 1}};
-
-  commandBuffer.copyBufferToImage(
-      buffer, image, vk::ImageLayout::eTransferDstOptimal, {region});
-  // Submit the buffer copy to the graphics queue
-  endSingleTimeCommands(commandBuffer);
-}
-
-/// Tạo vertex buffer: staging buffer trên host, copy sang device-local memory
-void VulkanRenderer::createVertexBuffer() {
-  // vi cpu k the truy cap truc tiep vung nho toi uu nhat trong gpu
-  // (VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) => dung bo dem tam thoi tren host
-  // (cpu). sau do khi hoat dong copy dl tu host sang bo nho local cua device
-  // (gpu)
-
-  // staging buffer: bo dem tam thoi tren host
-  vk::DeviceSize bufferSize = sizeof(vertices_[0]) * vertices_.size();
-  vk::raii::Buffer stagingBuffer({}); // local staging
-  vk::raii::DeviceMemory stagingBufferMemory({});
-
-  createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
-               vk::MemoryPropertyFlagBits::eHostVisible |
-                   vk::MemoryPropertyFlagBits::eHostCoherent,
-               stagingBuffer, stagingBufferMemory);
-
-  void *dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
-  std::memcpy(dataStaging, vertices_.data(), static_cast<size_t>(bufferSize));
-  stagingBufferMemory.unmapMemory();
-
-  // vertex buffer: bo dem local cua device (gpu)
-  createBuffer(bufferSize,
-               vk::BufferUsageFlagBits::eVertexBuffer |
-                   vk::BufferUsageFlagBits::eTransferDst,
-               vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer_,
-               vertexBufferMemory_);
-
-  copyBuffer(stagingBuffer, vertexBuffer_, bufferSize);
-}
-
-void VulkanRenderer::createIndexBuffer() {
-  vk::DeviceSize bufferSize = sizeof(indices_[0]) * indices_.size();
-
-  vk::raii::Buffer stagingBuffer({});             // local staging
-  vk::raii::DeviceMemory stagingBufferMemory({}); // local memory
-  createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
-               vk::MemoryPropertyFlagBits::eHostVisible |
-                   vk::MemoryPropertyFlagBits::eHostCoherent,
-               stagingBuffer, stagingBufferMemory);
-
-  void *data = stagingBufferMemory.mapMemory(0, bufferSize);
-  std::memcpy(data, indices_.data(), static_cast<size_t>(bufferSize));
-  stagingBufferMemory.unmapMemory();
-
-  createBuffer(bufferSize,
-               vk::BufferUsageFlagBits::eTransferDst |
-                   vk::BufferUsageFlagBits::eIndexBuffer,
-               vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer_,
-               indexBufferMemory_);
-
-  copyBuffer(stagingBuffer, indexBuffer_, bufferSize);
-}
 
 /// Tạo uniform buffers với persistent mapping cho toàn bộ vòng đời ứng dụng
 void VulkanRenderer::createUniformBuffers() {
   // persistent mapping use for all instance through app life time , not remap
   // effect perf
-  uniformBuffers_.clear();
-  uniformBuffersMemory_.clear();
-  uniformBuffersMapped_.clear();
+  // For each game object
+  for (auto &gameObject : gameObjects_) {
+    gameObject.uniformBuffers.clear();
+    gameObject.uniformBuffersMemory.clear();
+    gameObject.uniformBuffersMapped.clear();
 
-  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-    vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
-    vk::raii::Buffer buffer({});          // local
-    vk::raii::DeviceMemory bufferMem({}); // local
-    createBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer,
-                 vk::MemoryPropertyFlagBits::eHostVisible |
-                     vk::MemoryPropertyFlagBits::eHostCoherent,
-                 buffer, bufferMem);
-    uniformBuffers_.emplace_back(std::move(buffer));
-    uniformBuffersMemory_.emplace_back(std::move(bufferMem));
-    uniformBuffersMapped_.emplace_back(
-        uniformBuffersMemory_[i].mapMemory(0, bufferSize));
+    // Create uniform buffers for each frame in flight
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+      vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
+      vk::raii::Buffer buffer({});
+      vk::raii::DeviceMemory bufferMem({});
+      memory_->createBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer,
+                            vk::MemoryPropertyFlagBits::eHostVisible |
+                                vk::MemoryPropertyFlagBits::eHostCoherent,
+                            buffer, bufferMem);
+      gameObject.uniformBuffers.emplace_back(std::move(buffer));
+      gameObject.uniformBuffersMemory.emplace_back(std::move(bufferMem));
+      gameObject.uniformBuffersMapped.emplace_back(
+          gameObject.uniformBuffersMemory[i].mapMemory(0, bufferSize));
+    }
   }
 }
 
@@ -946,103 +564,82 @@ void VulkanRenderer::createDescriptorPool() {
   // shader
   std::array poolSize{
       vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer,
-                             MAX_FRAMES_IN_FLIGHT * 2),
+                             MAX_FRAMES_IN_FLIGHT *
+                                 MAX_OBJECTS ), 
       vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler,
-                             MAX_FRAMES_IN_FLIGHT),
+                             MAX_FRAMES_IN_FLIGHT * MAX_OBJECTS),
       vk::DescriptorPoolSize(vk::DescriptorType::eStorageBuffer,
-                             MAX_FRAMES_IN_FLIGHT * 2)};
+                             MAX_FRAMES_IN_FLIGHT *
+                                 2)}; // compute SSBO ping-pong
   vk::DescriptorPoolCreateInfo poolInfo{
       .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-      .maxSets = MAX_FRAMES_IN_FLIGHT * 2,
+      .maxSets = MAX_FRAMES_IN_FLIGHT * MAX_OBJECTS , 
       .poolSizeCount = static_cast<uint32_t>(poolSize.size()),
       .pPoolSizes = poolSize.data()};
   descriptorPool_ = vk::raii::DescriptorPool(device_->getDevice(), poolInfo);
 }
 
 void VulkanRenderer::createDescriptorSets() {
-  std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT,
-                                               *descriptorSetLayout_);
-  vk::DescriptorSetAllocateInfo allocInfo{
-      .descriptorPool = *descriptorPool_,
-      .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
-      .pSetLayouts = layouts.data()};
-  descriptorSets_.clear();
-  descriptorSets_ = device_->getDevice().allocateDescriptorSets(allocInfo);
+  // For each game object
+  for (auto &gameObject : gameObjects_) {
+    // Create descriptor sets for each frame in flight
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT,
+                                                 *descriptorSetLayout_);
+    vk::DescriptorSetAllocateInfo allocInfo{
+        .descriptorPool = *descriptorPool_,
+        .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+        .pSetLayouts = layouts.data()};
 
-  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-    vk::DescriptorBufferInfo bufferInfo{.buffer = *uniformBuffers_[i],
-                                        .offset = 0,
-                                        .range = sizeof(UniformBufferObject)};
-    vk::DescriptorImageInfo imageInfo{
-        .sampler = *textureSampler_,
-        .imageView = *textureImageView_,
-        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
-    std::array descriptorWrites{
-        vk::WriteDescriptorSet{.dstSet = *descriptorSets_[i],
-                               .dstBinding = 0,
-                               .dstArrayElement = 0,
-                               .descriptorCount = 1,
-                               .descriptorType =
-                                   vk::DescriptorType::eUniformBuffer,
-                               .pBufferInfo = &bufferInfo},
-        vk::WriteDescriptorSet{.dstSet = *descriptorSets_[i],
-                               .dstBinding = 1,
-                               .dstArrayElement = 0,
-                               .descriptorCount = 1,
-                               .descriptorType =
-                                   vk::DescriptorType::eCombinedImageSampler,
-                               .pImageInfo = &imageInfo}};
-    device_->getDevice().updateDescriptorSets(descriptorWrites, {});
+    gameObject.descriptorSets.clear();
+    gameObject.descriptorSets =
+        device_->getDevice().allocateDescriptorSets(allocInfo);
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+      vk::DescriptorBufferInfo bufferInfo{.buffer =
+                                              *gameObject.uniformBuffers[i],
+                                          .offset = 0,
+                                          .range = sizeof(UniformBufferObject)};
+      vk::DescriptorImageInfo imageInfo{
+          .sampler = *texture_.getSampler(),
+          .imageView = *texture_.getTextureView(),
+          .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
+      std::array descriptorWrites{
+          vk::WriteDescriptorSet{.dstSet = *gameObject.descriptorSets[i],
+                                 .dstBinding = 0,
+                                 .dstArrayElement = 0,
+                                 .descriptorCount = 1,
+                                 .descriptorType =
+                                     vk::DescriptorType::eUniformBuffer,
+                                 .pBufferInfo = &bufferInfo},
+          vk::WriteDescriptorSet{.dstSet = *gameObject.descriptorSets[i],
+                                 .dstBinding = 1,
+                                 .dstArrayElement = 0,
+                                 .descriptorCount = 1,
+                                 .descriptorType =
+                                     vk::DescriptorType::eCombinedImageSampler,
+                                 .pImageInfo = &imageInfo}};
+      device_->getDevice().updateDescriptorSets(descriptorWrites, {});
+    }
   }
 }
 
-/// Tải OBJ model, loại đỉnh trùng lặp bằng unordered_map
-void VulkanRenderer::loadModel() {
-  tinyobj::attrib_t attrib; // contain position, normal, texture coordinate
-  std::vector<tinyobj::shape_t> shapes; // contain faces
-  std::vector<tinyobj::material_t> materials;
-  std::string warn, err;
+/// Initialize the game objects with different positions, rotations, and scales
+void VulkanRenderer::setupGameObjects() {
+  gameObjects_.resize(MAX_OBJECTS);
+  // Object 1 - Center
+  gameObjects_[0].position = {0.0f, 0.0f, 0.0f};
+  gameObjects_[0].rotation = {0.0f, 0.0f, 0.0f};
+  gameObjects_[0].scale = {1.0f, 1.0f, 1.0f};
 
-  std::unordered_map<Vertex, uint32_t>
-      uniqueVertices{}; // dung unordered_map de loai dinh trung lap -> truyen
-                        // zo index
+  // Object 2 - Left
+  gameObjects_[1].position = {-2.0f, 0.0f, -1.0f};
+  gameObjects_[1].rotation = {0.0f, glm::radians(45.0f), 0.0f};
+  gameObjects_[1].scale = {0.75f, 0.75f, 0.75f};
 
-  if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err,
-                        MODEL_PATH.c_str())) {
-    throw std::runtime_error(warn + err);
-  }
-
-  for (const auto &shape : shapes) {
-    for (const auto &index : shape.mesh.indices) {
-      Vertex vertex{};
-
-      // arr 1d, (3i + 0, 3i + 1, 3i + 2) -> (x, y, z)
-      vertex.pos = {attrib.vertices[3 * index.vertex_index + 0],
-                    attrib.vertices[3 * index.vertex_index + 1],
-                    attrib.vertices[3 * index.vertex_index + 2]};
-
-      // arr 1d, (2i + 0, 2i + 1) -> (u, v)
-      vertex.texCoord = {
-          attrib.texcoords[2 * index.texcoord_index + 0],
-          1.0f - attrib.texcoords[2 * index.texcoord_index +
-                                  1] // OBJ: toa do y 0 la day hinh anh nhung
-                                     // hien tai: tai anh len vk thi y 0 la
-                                     // dinh nen phai dao nguoc
-      };
-
-      vertex.color = {1.0f, 1.0f, 1.0f};
-
-      if (uniqueVertices.count(vertex) == 0) {
-        uniqueVertices[vertex] = static_cast<uint32_t>(vertices_.size());
-        vertices_.push_back(vertex);
-      }
-
-      indices_.push_back(uniqueVertices[vertex]);
-    }
-  }
-
-  std::cout << "Vertices: " << vertices_.size() << std::endl;
-  std::cout << "Indices: " << indices_.size() << std::endl;
+  // Object 3 - Right
+  gameObjects_[2].position = {2.0f, 0.0f, -1.0f};
+  gameObjects_[2].rotation = {0.0f, glm::radians(-45.0f), 0.0f};
+  gameObjects_[2].scale = {0.75f, 0.75f, 0.75f};
 }
 
 /// Cập nhật uniform buffer: model/view/projection matrix mỗi frame
@@ -1050,315 +647,34 @@ void VulkanRenderer::updateUniformBuffer(
     uint32_t currentImage) { // (option)co the dung push constant truyen dl
                              // thuong xuyen thay doi
   static auto startTime = std::chrono::high_resolution_clock::now();
-
   auto currentTime = std::chrono::high_resolution_clock::now();
-  float time = std::chrono::duration<float, std::chrono::seconds::period>(
-                   currentTime - startTime)
-                   .count();
-  UniformBufferObject ubo{};
-  // quay 90deg moi giay quanh truc z
-  ubo.model = rotate(glm::mat4(1.0f), time * glm::radians(90.0f),
-                     glm::vec3(0.0f, 0.0f, 1.0f));
-  ubo.view = lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f),
-                    glm::vec3(0.0f, 0.0f, 1.0f));
-  // view 45deg tu tren xuong
-  ubo.proj =
+  float time = std::chrono::duration<float>(currentTime - startTime).count();
+
+  // Camera and projection matrices (shared by all objects)
+  glm::mat4 view =
+      glm::lookAt(glm::vec3(2.0f, 2.0f, 6.0f), glm::vec3(0.0f, 0.0f, 0.0f),
+                  glm::vec3(0.0f, 1.0f, 0.0f));
+  glm::mat4 proj =
       glm::perspective(glm::radians(45.0f),
                        static_cast<float>(swapchain_->getExtent().width) /
                            static_cast<float>(swapchain_->getExtent().height),
-                       0.1f, 10.0f);
-  ubo.proj[1][1] *= -1; // dao chieu y vk truc y duoi len tranh nguoc
-  std::memcpy(uniformBuffersMapped_[currentImage], &ubo, sizeof(ubo));
-}
-// compute shader
+                       0.1f, 20.0f);
+  proj[1][1] *= -1; // Flip Y for Vulkan
 
-/// tao descriptor set layout cho compute shader
-void VulkanRenderer::createComputeDescriptorSetLayout() {
-  // co 2 layout binding cho SSBO do vi tri hat cap nhap tung khung dua tren tg
-  // chenh lech  nen can biet vi tri cua khung truoc de cap nhap
-  std::array bindings = {
-      vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eUniformBuffer, 1,
-                                     vk::ShaderStageFlagBits::eCompute},
-      vk::DescriptorSetLayoutBinding{1, vk::DescriptorType::eStorageBuffer, 1,
-                                     vk::ShaderStageFlagBits::eCompute},
-      vk::DescriptorSetLayoutBinding{2, vk::DescriptorType::eStorageBuffer, 1,
-                                     vk::ShaderStageFlagBits::eCompute}};
-  vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = bindings.size(),
-                                               .pBindings = bindings.data()};
-  computeDescriptorSetLayout_ =
-      vk::raii::DescriptorSetLayout(device_->getDevice(), layoutInfo);
-}
+  // Update uniform buffers for each object
+  for (auto &gameObject : gameObjects_) {
+    // Apply continuous rotation to the object
+    gameObject.rotation.y += 0.001f; // Slow rotation around Y axis
 
-/// tao pipeline cho compute shader
-void VulkanRenderer::createComputePipeline() {
-  vk::raii::ShaderModule shaderModule =
-      createShaderModule(readFile("shaders/compute.spv"
-#if defined(__ANDROID__)
-                                  ,
-                                  assetManager_
-#endif
-                                  ));
-  vk::PipelineShaderStageCreateInfo stageInfo{
-      .stage = vk::ShaderStageFlagBits::eCompute,
-      .module = shaderModule,
-      .pName = "compMain"};
-  vk::PipelineLayoutCreateInfo layoutInfo{
-      .setLayoutCount = 1, .pSetLayouts = &*computeDescriptorSetLayout_};
-  computePipelineLayout_ =
-      vk::raii::PipelineLayout(device_->getDevice(), layoutInfo);
-  vk::ComputePipelineCreateInfo pipelineInfo{.stage = stageInfo,
-                                             .layout = computePipelineLayout_};
-  computePipeline_ =
-      vk::raii::Pipeline(device_->getDevice(), nullptr, pipelineInfo);
-}
+    // Get the model matrix for this object
+    glm::mat4 model = gameObject.getModelMatrix();
 
-/// pipeline ve particle
-void VulkanRenderer::createParticleGraphicsPipeline() {
-  vk::raii::ShaderModule shaderModule =
-      createShaderModule(readFile("shaders/compute.spv"
-#if defined(__ANDROID__)
-                                  ,
-                                  assetManager_
-#endif
-                                  ));
-  vk::PipelineShaderStageCreateInfo vertStage{
-      .stage = vk::ShaderStageFlagBits::eVertex,
-      .module = shaderModule,
-      .pName = "vertMain"};
-  vk::PipelineShaderStageCreateInfo fragStage{
-      .stage = vk::ShaderStageFlagBits::eFragment,
-      .module = shaderModule,
-      .pName = "fragMain"};
-  vk::PipelineShaderStageCreateInfo stages[] = {vertStage, fragStage};
+    // Create and update the UBO
+    UniformBufferObject ubo{.model = model, .view = view, .proj = proj};
 
-  auto bindingDesc = Particle::getBindingDescription();
-  auto attrDescs = Particle::getAttributeDescriptions();
-  vk::PipelineVertexInputStateCreateInfo vertexInput{
-      .vertexBindingDescriptionCount = 1,
-      .pVertexBindingDescriptions = &bindingDesc,
-      .vertexAttributeDescriptionCount = attrDescs.size(),
-      .pVertexAttributeDescriptions = attrDescs.data()};
-  vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
-      .topology = vk::PrimitiveTopology::ePointList};
-  vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1,
-                                                    .scissorCount = 1};
-  vk::PipelineRasterizationStateCreateInfo rasterizer{
-      .polygonMode = vk::PolygonMode::eFill,
-      .cullMode = vk::CullModeFlagBits::eNone,
-      .lineWidth = 1.0f};
-  vk::PipelineMultisampleStateCreateInfo multisampling{
-      .rasterizationSamples = device_->msaaSamples_,
-      .sampleShadingEnable = vk::True,
-      .minSampleShading = 0.2f};
-  vk::PipelineDepthStencilStateCreateInfo depthStencil{.depthTestEnable =
-                                                           vk::False};
-  vk::PipelineColorBlendAttachmentState colorBlendAttach{
-      .blendEnable = vk::True,
-      .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
-      .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
-      .colorBlendOp = vk::BlendOp::eAdd,
-      .srcAlphaBlendFactor = vk::BlendFactor::eOne,
-      .dstAlphaBlendFactor = vk::BlendFactor::eZero,
-      .alphaBlendOp = vk::BlendOp::eAdd,
-      .colorWriteMask =
-          vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-          vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
-  vk::PipelineColorBlendStateCreateInfo colorBlending{
-      .attachmentCount = 1, .pAttachments = &colorBlendAttach};
-  std::vector dynamicStates = {vk::DynamicState::eViewport,
-                               vk::DynamicState::eScissor};
-  vk::PipelineDynamicStateCreateInfo dynamicState{
-      .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
-      .pDynamicStates = dynamicStates.data()};
-
-  vk::PipelineLayoutCreateInfo layoutInfo{};
-  particlePipelineLayout_ =
-      vk::raii::PipelineLayout(device_->getDevice(), layoutInfo);
-
-  vk::Format colorFormat = swapchain_->getImageFormat();
-  vk::Format depthFormat = findDepthFormat();
-  vk::PipelineRenderingCreateInfo renderingInfo{
-      .colorAttachmentCount = 1,
-      .pColorAttachmentFormats = &colorFormat,
-      .depthAttachmentFormat = depthFormat};
-  vk::GraphicsPipelineCreateInfo pipelineInfo{
-      .pNext = &renderingInfo,
-      .stageCount = 2,
-      .pStages = stages,
-      .pVertexInputState = &vertexInput,
-      .pInputAssemblyState = &inputAssembly,
-      .pViewportState = &viewportState,
-      .pRasterizationState = &rasterizer,
-      .pMultisampleState = &multisampling,
-      .pDepthStencilState = &depthStencil,
-      .pColorBlendState = &colorBlending,
-      .pDynamicState = &dynamicState,
-      .layout = particlePipelineLayout_,
-      .renderPass = nullptr};
-  vk::StructureChain chain = {pipelineInfo, renderingInfo};
-  particlePipeline_ =
-      vk::raii::Pipeline(device_->getDevice(), nullptr,
-                         chain.get<vk::GraphicsPipelineCreateInfo>());
-}
-
-/// SSBO
-void VulkanRenderer::createShaderStorageBuffers() {
-  /// tao particle hinh tron ban kinh r,velocity ra ngoai copy len gpu qua SSBO
-  shaderStorageBuffers_.clear();
-  shaderStorageBuffersMemory_.clear();
-
-  std::default_random_engine rndEngine(static_cast<unsigned>(time(nullptr)));
-  std::uniform_real_distribution<float> rndDist(0.0f, 1.0f);
-
-  std::vector<Particle> particles(PARTICLE_COUNT);
-  for (auto &particle : particles) {
-    float r = 0.25f * sqrtf(rndDist(rndEngine));
-    float theta = rndDist(rndEngine) * 2.0f * 3.14159265358979323846f;
-    float x = r * cosf(theta) * HEIGHT / WIDTH;
-    float y = r * sinf(theta);
-    particle.position = glm::vec2(x, y);
-    particle.velocity = glm::normalize(glm::vec2(x, y)) * 0.00025f;
-    particle.color = glm::vec4(rndDist(rndEngine), rndDist(rndEngine),
-                               rndDist(rndEngine), 1.0f);
+    // Copy the UBO data to the mapped memory
+    memcpy(gameObject.uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
   }
-
-  vk::DeviceSize bufferSize = sizeof(Particle) * PARTICLE_COUNT;
-
-  vk::raii::Buffer stagingBuffer({});
-  vk::raii::DeviceMemory stagingBufferMemory({});
-  createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
-               vk::MemoryPropertyFlagBits::eHostVisible |
-                   vk::MemoryPropertyFlagBits::eHostCoherent,
-               stagingBuffer, stagingBufferMemory);
-  void *data = stagingBufferMemory.mapMemory(0, bufferSize);
-  std::memcpy(data, particles.data(), bufferSize);
-  stagingBufferMemory.unmapMemory();
-
-  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-    vk::raii::Buffer buffer({});
-    vk::raii::DeviceMemory bufferMem({});
-    createBuffer(bufferSize,
-                 vk::BufferUsageFlagBits::eStorageBuffer |
-                     vk::BufferUsageFlagBits::eVertexBuffer |
-                     vk::BufferUsageFlagBits::eTransferDst,
-                 vk::MemoryPropertyFlagBits::eDeviceLocal, buffer, bufferMem);
-    copyBuffer(stagingBuffer, buffer, bufferSize);
-    shaderStorageBuffers_.emplace_back(std::move(buffer));
-    shaderStorageBuffersMemory_.emplace_back(std::move(bufferMem));
-  }
-}
-
-/// UBO cho compute shader
-void VulkanRenderer::createComputeUniformBuffers() {
-  computeUniformBuffers_.clear();
-  computeUniformBuffersMemory_.clear();
-  computeUniformBuffersMapped_.clear();
-
-  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-    vk::DeviceSize bufferSize = sizeof(ComputeUBO);
-    vk::raii::Buffer buffer({});
-    vk::raii::DeviceMemory bufferMem({});
-    createBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer,
-                 vk::MemoryPropertyFlagBits::eHostVisible |
-                     vk::MemoryPropertyFlagBits::eHostCoherent,
-                 buffer, bufferMem);
-    computeUniformBuffers_.emplace_back(std::move(buffer));
-    computeUniformBuffersMemory_.emplace_back(std::move(bufferMem));
-    computeUniformBuffersMapped_.emplace_back(
-        computeUniformBuffersMemory_[i].mapMemory(0, bufferSize));
-  }
-}
-
-void VulkanRenderer::createComputeDescriptorSets() {
-  /// 2 descriptor set cho compute shader moi set bind 1 UBO va 2 SSBO, 2 ssbo
-  /// luan chuyen doc ghi tung khung
-  std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT,
-                                               *computeDescriptorSetLayout_);
-  vk::DescriptorSetAllocateInfo allocInfo{
-      .descriptorPool = *descriptorPool_,
-      .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
-      .pSetLayouts = layouts.data()};
-  computeDescriptorSets_ =
-      device_->getDevice().allocateDescriptorSets(allocInfo);
-
-  vk::DeviceSize ssboSize = sizeof(Particle) * PARTICLE_COUNT;
-  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-    vk::DescriptorBufferInfo uboInfo{.buffer = *computeUniformBuffers_[i],
-                                     .offset = 0,
-                                     .range = sizeof(ComputeUBO)};
-    vk::DescriptorBufferInfo ssboInInfo{
-        .buffer = *shaderStorageBuffers_[(i - 1 + MAX_FRAMES_IN_FLIGHT) %
-                                         MAX_FRAMES_IN_FLIGHT],
-        .offset = 0,
-        .range = ssboSize};
-    vk::DescriptorBufferInfo ssboOutInfo{
-        .buffer = *shaderStorageBuffers_[i], .offset = 0, .range = ssboSize};
-    std::array writes = {
-        vk::WriteDescriptorSet{.dstSet = *computeDescriptorSets_[i],
-                               .dstBinding = 0,
-                               .descriptorCount = 1,
-                               .descriptorType =
-                                   vk::DescriptorType::eUniformBuffer,
-                               .pBufferInfo = &uboInfo},
-        vk::WriteDescriptorSet{.dstSet = *computeDescriptorSets_[i],
-                               .dstBinding = 1,
-                               .descriptorCount = 1,
-                               .descriptorType =
-                                   vk::DescriptorType::eStorageBuffer,
-                               .pBufferInfo = &ssboInInfo},
-        vk::WriteDescriptorSet{.dstSet = *computeDescriptorSets_[i],
-                               .dstBinding = 2,
-                               .descriptorCount = 1,
-                               .descriptorType =
-                                   vk::DescriptorType::eStorageBuffer,
-                               .pBufferInfo = &ssboOutInfo}};
-    device_->getDevice().updateDescriptorSets(writes, {});
-  }
-}
-
-void VulkanRenderer::createComputeCommandBuffers() {
-  computeCommandBuffers_.clear();
-  vk::CommandBufferAllocateInfo allocInfo{
-      .commandPool = commandPool_,
-      .level = vk::CommandBufferLevel::ePrimary,
-      .commandBufferCount = MAX_FRAMES_IN_FLIGHT};
-  computeCommandBuffers_ =
-      vk::raii::CommandBuffers(device_->getDevice(), allocInfo);
-}
-
-void VulkanRenderer::recordComputeCommandBuffer() {
-  /// ghi lenh compute moi fframe , dispatch (PARTICLE_COUNT / INVOCATIONS_SIZE)
-  /// work groups x size 1 work group y, 1 work group z
-  auto &cmd = computeCommandBuffers_[frameIndex_];
-  uint32_t work_group_countX = PARTICLE_COUNT / INVOCATIONS_SIZE;
-  cmd.begin({});
-  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *computePipeline_);
-  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
-                         computePipelineLayout_, 0,
-                         *computeDescriptorSets_[frameIndex_], nullptr);
-  cmd.dispatch(work_group_countX, 1,
-               1); // 32 work group x, 1 work
-  // group y, 1 work group z
-  cmd.end();
-  static std::once_flag flag;
-  std::call_once(flag, [&] {
-    std::cout << "dispatch (X,Y,Z): (" << work_group_countX << ",1,1)"
-              << std::endl;
-  });
-}
-
-void VulkanRenderer::updateComputeUniformBuffer(uint32_t currentFrame) {
-  /// cap nhap UBO cho compute shader moi khung dua tren tg delta time
-  static auto startTime = std::chrono::high_resolution_clock::now();
-  auto currentTime = std::chrono::high_resolution_clock::now();
-  float time =
-      std::chrono::duration<float, std::milli>(currentTime - startTime).count();
-
-  ComputeUBO ubo{};
-  ubo.deltaTime = (time - lastFrameTime_) * 2.0f;
-  lastFrameTime_ = time;
-
-  std::memcpy(computeUniformBuffersMapped_[currentFrame], &ubo, sizeof(ubo));
 }
 
 /**
@@ -1373,23 +689,23 @@ void VulkanRenderer::drawFrame() {
   /// compute -> semaphore -> graphics -> semaphore -> present
   // COMPUTE
   auto computeFenceResult = device_->getDevice().waitForFences(
-      *computeInFlightFences_[frameIndex_], vk::True, UINT64_MAX);
+      *particleSystem_.computeInFlightFence(frameIndex_), vk::True, UINT64_MAX);
 
   if (computeFenceResult != vk::Result::eSuccess) {
     throw std::runtime_error("failed to wait for compute fence!");
   }
 
-  updateComputeUniformBuffer(frameIndex_);
-  device_->getDevice().resetFences(*computeInFlightFences_[frameIndex_]);
-  computeCommandBuffers_[frameIndex_].reset();
-  recordComputeCommandBuffer();
+  particleSystem_.updateComputeUniformBuffer(frameIndex_);
+  device_->getDevice().resetFences(*particleSystem_.computeInFlightFence(frameIndex_));
+  particleSystem_.computeCommandBuffer(frameIndex_).reset();
+  particleSystem_.recordComputeCommandBuffer(frameIndex_);
   vk::SubmitInfo computeSubmitInfo{
       .commandBufferCount = 1,
-      .pCommandBuffers = &*computeCommandBuffers_[frameIndex_],
+      .pCommandBuffers = &*particleSystem_.computeCommandBuffer(frameIndex_),
       .signalSemaphoreCount = 1,
-      .pSignalSemaphores = &*computeFinishedSemaphores_[frameIndex_]};
+      .pSignalSemaphores = &*particleSystem_.computeFinishedSemaphore(frameIndex_)};
   device_->getGraphicsQueue().submit(computeSubmitInfo,
-                                     *computeInFlightFences_[frameIndex_]);
+                                     *particleSystem_.computeInFlightFence(frameIndex_));
   // GRAPHICS
   auto fenceResult = device_->getDevice().waitForFences(
       *inFlightFences_[frameIndex_], vk::True, UINT64_MAX);
@@ -1416,7 +732,7 @@ void VulkanRenderer::drawFrame() {
 
   // gui bo dem lenh
   vk::Semaphore waitSemaphores[] = {// mảng 2 phần tử
-                                    *computeFinishedSemaphores_[frameIndex_],
+                                    *particleSystem_.computeFinishedSemaphore(frameIndex_),
                                     *presentCompleteSemaphores_[frameIndex_]};
   vk::PipelineStageFlags waitStages[] = {
       // mảng 2 phần tử
@@ -1461,26 +777,19 @@ void VulkanRenderer::drawFrame() {
 }
 
 void VulkanRenderer::cleanupSwapChainResources() {
-  depthImageView_ = nullptr;
-  depthImage_ = nullptr;
-  depthImageMemory_ = nullptr;
-  colorImageView_ = nullptr;
-  colorImage_ = nullptr;
-  colorImageMemory_ = nullptr;
-
+  texture_.resetSwapChainResources();
+  
   commandBuffers_.clear();
   renderFinishedSemaphores_.clear();
   presentCompleteSemaphores_.clear();
   inFlightFences_.clear();
-
-  computeCommandBuffers_.clear();
-  computeFinishedSemaphores_.clear();
-  computeInFlightFences_.clear();
+  
+  particleSystem_.resetSwapChainResources();
+  
 }
 
 void VulkanRenderer::createSwapChainDependentResources() {
-  createDepthResources();
-  createColorResources();
+  texture_.recreateSwapChainResources();
   createCommandBuffers();
   createSyncObjects();
 }
@@ -1510,40 +819,24 @@ void VulkanRenderer::recreateSwapChain() {
 
 void VulkanRenderer::cleanup() {
   cleanupSwapChainResources();
-
-  // compute
-  computeDescriptorSets_.clear();
-  computeUniformBuffersMapped_.clear();
-  computeUniformBuffersMemory_.clear();
-  computeUniformBuffers_.clear();
-  shaderStorageBuffers_.clear();
-  shaderStorageBuffersMemory_.clear();
-  computePipeline_ = nullptr;
-  computePipelineLayout_ = nullptr;
-  computeDescriptorSetLayout_ = nullptr;
-  particlePipeline_ = nullptr;
-  particlePipelineLayout_ = nullptr;
-
+  particleSystem_.cleanup();
+  texture_.cleanup();
   // graphics
-  descriptorSets_.clear();
-  uniformBuffersMapped_.clear();
-  uniformBuffersMemory_.clear();
-  uniformBuffers_.clear();
+  for (auto &obj : gameObjects_) {
+    obj.descriptorSets.clear();
+    obj.uniformBuffersMapped.clear();
+    obj.uniformBuffersMemory.clear();
+    obj.uniformBuffers.clear();
+  }
+  gameObjects_.clear();
 
   descriptorPool_ = nullptr;
 
-  indexBuffer_ = nullptr;
-  indexBufferMemory_ = nullptr;
-  vertexBuffer_ = nullptr;
-  vertexBufferMemory_ = nullptr;
-
-  textureSampler_ = nullptr;
-  textureImageView_ = nullptr;
-  textureImage_ = nullptr;
-  textureImageMemory_ = nullptr;
+  model_.cleanup();
 
   graphicsPipeline_ = nullptr;
   pipelineLayout_ = nullptr;
   descriptorSetLayout_ = nullptr;
+  memory_.reset();
   commandPool_ = nullptr;
 }

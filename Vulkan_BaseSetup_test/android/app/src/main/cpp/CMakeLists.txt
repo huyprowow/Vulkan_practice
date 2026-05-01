@@ -62,9 +62,10 @@ add_custom_target(android_shaders DEPENDS ${SHADER_OUTPUTS})
 # GameActivity (Prefab)
 find_package(game-activity REQUIRED CONFIG)
 find_package(glm REQUIRED)
-find_package(tinyobjloader REQUIRED)
+find_package(tinygltf REQUIRED)
 find_package(VulkanHpp REQUIRED)
 find_package(stb REQUIRED)
+find_package(Ktx REQUIRED)
 
 # Native library
 add_library(Vulkan_Learn_Android SHARED
@@ -76,6 +77,10 @@ add_library(Vulkan_Learn_Android SHARED
     "${PROJ_ROOT}/src/render/vulkan/VulkanDevice.cpp"
     "${PROJ_ROOT}/src/render/vulkan/VulkanSwapchain.cpp"
     "${PROJ_ROOT}/src/render/vulkan/VulkanRenderer.cpp"
+    "${PROJ_ROOT}/src/render/vulkan/VulkanTexture.cpp"
+    "${PROJ_ROOT}/src/render/vulkan/VulkanModel.cpp"
+    "${PROJ_ROOT}/src/render/vulkan/VulkanParticleSystem.cpp"
+    "${PROJ_ROOT}/src/render/vulkan/VulkanMemory.cpp"
 )
 target_link_options(Vulkan_Learn_Android PRIVATE
     "-u" "Java_com_google_androidgamesdk_GameActivity_initializeNativeCode"
@@ -100,9 +105,10 @@ find_library(vulkan-lib vulkan)
 target_link_libraries(Vulkan_Learn_Android PRIVATE
     game-activity::game-activity
     glm::glm
-    tinyobjloader::tinyobjloader
     VulkanHpp::VulkanHpp
     stb::stb
+    tinygltf::tinygltf
+    KTX::ktx
     ${android-lib}
     ${log-lib}
     ${vulkan-lib}

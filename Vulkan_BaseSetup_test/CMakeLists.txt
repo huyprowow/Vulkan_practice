@@ -17,9 +17,10 @@ endif()
 
 find_package(glfw3 REQUIRED)
 find_package(glm REQUIRED)
-find_package(tinyobjloader REQUIRED)
+find_package(tinygltf REQUIRED)
 find_package(Vulkan REQUIRED)
 find_package(VulkanHpp REQUIRED)
+find_package(Ktx CONFIG REQUIRED)
 
 if(ENABLE_DX12)
   find_package(directxtk12 CONFIG REQUIRED)
@@ -148,6 +149,10 @@ function(add_to_build CPP_FILE)
     src/render/vulkan/VulkanDevice.cpp
     src/render/vulkan/VulkanSwapchain.cpp
     src/render/vulkan/VulkanRenderer.cpp
+    src/render/vulkan/VulkanMemory.cpp
+    src/render/vulkan/VulkanTexture.cpp
+    src/render/vulkan/VulkanModel.cpp
+    src/render/vulkan/VulkanParticleSystem.cpp
   )
 
   # Add compile definition if C++ 20 module is enabled
@@ -190,10 +195,10 @@ endfunction()
 
 
 add_to_build(main.cpp
-  LIBS Vulkan::cppm glfw glm::glm
+  LIBS Vulkan::cppm glfw glm::glm tinygltf::tinygltf KTX::ktx
   SHADER shader
-  TEXTURES textures/viking_room.png
-  MODELS models/viking_room.obj
+  TEXTURES textures/viking_room.ktx2
+  MODELS models/viking_room.glb
 )
 
 # --- Documentation (Doxygen + Graphviz) ---

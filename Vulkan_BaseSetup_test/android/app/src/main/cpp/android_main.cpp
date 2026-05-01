@@ -34,13 +34,19 @@ struct AndroidVulkanApp {
     if (!app || !app->window)
       return;
     window.setNativeWindow(app->window);
-    instance.init(window);
-    device.init(instance.getInstance(), instance.getSurface());
-    swapchain.init(device.getPhysicalDevice(), device, instance.getSurface(),
-                   window);
-    renderer.init(device, swapchain, window, app->activity->assetManager);
-    initialized = true;
-    LOGI("Vulkan initialized");
+    try {
+      instance.init(window);
+      device.init(instance.getInstance(), instance.getSurface());
+      swapchain.init(device.getPhysicalDevice(), device, instance.getSurface(),
+                     window);
+      renderer.init(device, swapchain, window, app->activity->assetManager);
+      initialized = true;
+      LOGI("Vulkan initialized");
+    } catch (const std::exception &e) {
+      LOGE("Vulkan init failed: %s", e.what());
+      shutdown();
+      initialized = false;
+    }
   }
   /// clean up window lifecycle
   void shutdown() {
