@@ -12,8 +12,11 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
+#include <thread>
 #include <vector>
 #include <vulkan/vulkan_raii.hpp>
+
 
 #if defined(__ANDROID__)
 struct AAssetManager;
@@ -69,6 +72,10 @@ private:
   std::vector<GameObject> gameObjects_;
 
   uint32_t frameIndex_ = 0;
+  // mutex bao ve vk::Queue.submit() / presentKHR() (Vulkan spec: Queue khong
+  // thread-safe). PS giu pointer toi mutex nay de bao ve compute submit luc
+  // dung multithreading.
+  std::mutex queueSubmitMutex_;
 
   void createDescriptorSetLayout();
   void createGraphicsPipeline();

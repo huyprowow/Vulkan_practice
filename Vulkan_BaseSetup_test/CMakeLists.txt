@@ -153,6 +153,7 @@ function(add_to_build CPP_FILE)
     src/render/vulkan/VulkanTexture.cpp
     src/render/vulkan/VulkanModel.cpp
     src/render/vulkan/VulkanParticleSystem.cpp
+    src/render/vulkan/ThreadCommandPool.cpp
   )
 
   # Add compile definition if C++ 20 module is enabled

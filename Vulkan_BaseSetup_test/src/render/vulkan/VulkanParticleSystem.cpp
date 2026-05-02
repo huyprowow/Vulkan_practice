@@ -75,8 +75,7 @@ void VulkanParticleSystem::updateComputeUniformBuffer(uint32_t currentFrame) {
 void VulkanParticleSystem::recordDraw(vk::raii::CommandBuffer &cmdBuf,
                                       uint32_t frameIndex) {
   // VẼ PARTICLES (2d nen tat depth test, ve sau luon de len model)
-  cmdBuf.bindPipeline(vk::PipelineBindPoint::eGraphics,
-                             *particlePipeline_);
+  cmdBuf.bindPipeline(vk::PipelineBindPoint::eGraphics, *particlePipeline_);
   cmdBuf.bindVertexBuffers(0, *shaderStorageBuffers_[frameIndex], {0});
   cmdBuf.draw(PARTICLE_COUNT, 1, 0, 0);
 }
@@ -104,7 +103,11 @@ void VulkanParticleSystem::resetSwapChainResources() {
 }
 
 void VulkanParticleSystem::cleanup() {
-  // sync + pool 
+  // === Multithreading: stop workers TRUOC khi destroy GPU resources ===
+  stopThreads();
+  threadCmdPool_.cleanup();
+
+  // sync + pool
   computeFinishedSemaphores_.clear();
   computeInFlightFences_.clear();
   computeCommandBuffers_.clear();
@@ -150,8 +153,16 @@ void VulkanParticleSystem::createComputePipeline(const std::vector<char> &spv) {
       .stage = vk::ShaderStageFlagBits::eCompute,
       .module = shaderModule,
       .pName = "compMain"};
+  // push constant range cho startIndex + count (multithreading dispatch)
+  vk::PushConstantRange pushConstantRange{.stageFlags =
+                                              vk::ShaderStageFlagBits::eCompute,
+                                          .offset = 0,
+                                          .size = sizeof(PushConstants)};
   vk::PipelineLayoutCreateInfo layoutInfo{
-      .setLayoutCount = 1, .pSetLayouts = &*computeDescriptorSetLayout_};
+      .setLayoutCount = 1,
+      .pSetLayouts = &*computeDescriptorSetLayout_,
+      .pushConstantRangeCount = 1,
+      .pPushConstantRanges = &pushConstantRange};
   computePipelineLayout_ =
       vk::raii::PipelineLayout(device_->getDevice(), layoutInfo);
   vk::ComputePipelineCreateInfo pipelineInfo{.stage = stageInfo,
@@ -391,4 +402,163 @@ void VulkanParticleSystem::createComputeSyncObjects() {
         device_->getDevice(),
         vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
   }
+}
+
+/// khoi tao worker threads + chia particle ra cho moi thread.
+/// goi sau init(). worker se sleep tren condition_variable cho den khi co work
+/// signal.
+void VulkanParticleSystem::initThreads(uint32_t threadCount,
+                                       std::mutex &queueSubmitMutex) {
+  threadCount_ = threadCount;
+  queueSubmitMutex_ = &queueSubmitMutex;
+  // init atomic flags: ready=false (chua co work), done=true (idle)
+  threadWorkReady_ = std::vector<std::atomic<bool>>(threadCount_);
+  threadWorkDone_ = std::vector<std::atomic<bool>>(threadCount_);
+  for (uint32_t i = 0; i < threadCount_; i++) {
+    threadWorkReady_[i] = false;
+    threadWorkDone_[i] = true;
+  }
+  // chia particle range cho moi thread (thread cuoi nhan phan du)
+  particleGroups_.resize(threadCount_);
+  uint32_t particlesPerThread = PARTICLE_COUNT / threadCount_;
+  for (uint32_t i = 0; i < threadCount_; i++) {
+    particleGroups_[i].startIndex = i * particlesPerThread;
+    particleGroups_[i].count = (i == threadCount_ - 1)
+                                   ? (PARTICLE_COUNT - i * particlesPerThread)
+                                   : particlesPerThread;
+    std::cout << "Thread " << i << " processes particles "
+              << particleGroups_[i].startIndex << ".."
+              << (particleGroups_[i].startIndex + particleGroups_[i].count - 1)
+              << " (count=" << particleGroups_[i].count << ")\n";
+  }
+  // tao per-thread, per-frame cmd resources
+  // dung CHUNG queue family voi graphics (codebase chi co 1 queue)
+  threadCmdPool_.init(*device_, device_->getQueueIndex(), threadCount_,
+                      MAX_FRAMES_IN_FLIGHT);
+  // spawn worker threads (chay vong lap workerThreadFunc, sleep tren
+  // condition_variable)
+  shouldExit_.store(false, std::memory_order_release);
+  workerThreads_.reserve(threadCount_);
+  for (uint32_t i = 0; i < threadCount_; i++) {
+    workerThreads_.emplace_back(&VulkanParticleSystem::workerThreadFunc, this,
+                                i);
+  }
+}
+/// vong lap chinh cua worker thread.
+/// flow: wait condition_variable → record cmd → notify → wait tiep
+void VulkanParticleSystem::workerThreadFunc(uint32_t threadIndex) {
+  while (!shouldExit_.load(std::memory_order_acquire)) {
+    // doi work signal (ngu, KHONG ton CPU)
+    // Cho frame moi: workCv_.wait(guard, predicate) mo lock roi block thread
+    // cho den khi main signal (notify) VA predicate truee
+    {
+      std::unique_lock<std::mutex> lock(workMutex_);
+      workCv_.wait(lock, [this, threadIndex]() {
+        return shouldExit_.load(std::memory_order_acquire) ||
+               threadWorkReady_[threadIndex].load(std::memory_order_acquire);
+      });
+      if (shouldExit_.load(std::memory_order_acquire))
+        return;
+      // tieu thu signal
+      threadWorkReady_[threadIndex].store(false, std::memory_order_release);
+    }
+    // LOCK RELEASED — work chay SONG SONG voi cac thread khac
+    uint32_t frameIdx = currentFrameIndex_.load(std::memory_order_acquire);
+    try {
+      recordComputeCommandBufferRange(threadIndex, frameIdx);
+    } catch (const std::exception &e) {
+      std::cerr << "Worker " << threadIndex << " error: " << e.what() << "\n";
+    }
+    // mark done + notify main thread
+    // Danh dau xong + danh thuc main: main dang waitForThreadsToComplete() tren
+    // cung workCv_; notify_all() bao co bien doi (threadWorkDone_) de wait_for
+    // re-check predicate.
+    {
+      std::lock_guard<std::mutex> lock(workMutex_);
+      threadWorkDone_[threadIndex].store(true, std::memory_order_release);
+    }
+    workCv_.notify_all();
+  }
+}
+/// record cmd buffer cho range particle cua 1 thread.
+/// goi tu worker thread (KHONG goi tu main).
+void VulkanParticleSystem::recordComputeCommandBufferRange(
+    uint32_t threadIndex, uint32_t frameIndex) {
+  auto &cmd = threadCmdPool_.getCommandBuffer(threadIndex, frameIndex);
+  const ParticleGroup &group = particleGroups_[threadIndex];
+  cmd.reset();
+  cmd.begin(vk::CommandBufferBeginInfo{
+      .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+  cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *computePipeline_);
+  cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                         *computePipelineLayout_, 0,
+                         *computeDescriptorSets_[frameIndex], nullptr);
+  // push constants: thread chi xu li tu startIndex, count particle
+  PushConstants pc{group.startIndex, group.count};
+  cmd.pushConstants<PushConstants>(*computePipelineLayout_,
+                                   vk::ShaderStageFlagBits::eCompute, 0, pc);
+  // dispatch chi phan particle cua thread (lam tron len boi INVOCATIONS_SIZE)
+  uint32_t groupCountX =
+      (group.count + INVOCATIONS_SIZE - 1) / INVOCATIONS_SIZE;
+  cmd.dispatch(groupCountX, 1, 1);
+  cmd.end();
+}
+/// kich TAT CA worker cung luc (parallel, KHONG sequential nhu tutorial
+/// Khronos)
+void VulkanParticleSystem::signalThreadsToWork() {
+  {
+    std::lock_guard<std::mutex> lock(workMutex_);
+    for (uint32_t i = 0; i < threadCount_; i++) {
+      threadWorkDone_[i].store(false, std::memory_order_release);
+      threadWorkReady_[i].store(true, std::memory_order_release);
+    }
+  }
+  // notify_all danh thuc tat ca worker dang ngu tren condition_variable
+  workCv_.notify_all();
+}
+/// doi tat ca worker xong (condition_variable wait_for co timeout 3s phong
+/// deadlock)
+void VulkanParticleSystem::waitForThreadsToComplete() {
+  std::unique_lock<std::mutex> lock(workMutex_);
+  // Main block o day cho den khi moi threadWorkDone_ == true. wait_for +
+  // lambda:
+  // moi lan worker notify_all(), predicate chay lai; het timeout => false.
+  bool allDone =
+      workCv_.wait_for(lock, std::chrono::milliseconds(3000), [this]() {
+        for (uint32_t i = 0; i < threadCount_; i++) {
+          if (!threadWorkDone_[i].load(std::memory_order_acquire))
+            return false;
+        }
+        return true;
+      });
+  if (!allDone) {
+    std::cerr << "Worker thread timeout!\n";
+  }
+}
+/// orchestrator: kich worker → doi xong → tra cmd buffer cho Renderer submit
+std::vector<vk::CommandBuffer>
+VulkanParticleSystem::dispatchMultithreaded(uint32_t frameIndex) {
+  // truyen frame index cho worker (atomic)
+  currentFrameIndex_.store(frameIndex, std::memory_order_release);
+  signalThreadsToWork();
+  waitForThreadsToComplete();
+  // collect cmd buffers tu tat ca thread
+  std::vector<vk::CommandBuffer> result;
+  result.reserve(threadCount_);
+  for (uint32_t i = 0; i < threadCount_; i++) {
+    result.push_back(*threadCmdPool_.getCommandBuffer(i, frameIndex));
+  }
+  return result;
+}
+/// shutdown worker threads. goi trong cleanup() TRUOC khi destroy resources.
+void VulkanParticleSystem::stopThreads() {
+  shouldExit_.store(true, std::memory_order_release);
+  // notify_all de wake worker dang ngu tren condition_variable (de break vong
+  // lap)
+  workCv_.notify_all();
+  for (auto &t : workerThreads_) {
+    if (t.joinable())
+      t.join();
+  }
+  workerThreads_.clear();
 }

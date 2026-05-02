@@ -51,6 +51,13 @@ struct UniformBuffer
     float deltaTime;
 };
 ConstantBuffer<UniformBuffer> ubo;
+// Push constants — main thread inject startIndex + count cho mỗi worker
+struct PushConstants
+{
+    uint startIndex;
+    uint count;
+};
+[[vk::push_constant]] PushConstants pushConstants;
 
 struct ParticleSSBO
 {
@@ -63,7 +70,14 @@ RWStructuredBuffer<ParticleSSBO> particlesOut;
 [numthreads(256, 1, 1)] // invocations trong 1 work group (256 x, 1 y, 1 z) vi particle mang 1 chieu
 void compMain(uint3 threadId: SV_DispatchThreadID)
 {
-    uint index = threadId.x;
+    // localIndex = vi tri trong range cua thread, KHONG phai global index
+    uint localIndex = threadId.x;
+    // Bound check theo COUNT thread nay nhan, khong phai PARTICLE_COUNT toan cuc
+    // (multithreading: moi worker chi xu li 1 phan particle)
+    if (localIndex >= pushConstants.count)
+        return;
+    // global index = offset thread + local index
+    uint index = pushConstants.startIndex + localIndex;
 
     Particle pIn = particlesIn[index].particles;
 

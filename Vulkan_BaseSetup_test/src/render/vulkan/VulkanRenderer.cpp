@@ -55,7 +55,7 @@ void VulkanRenderer::init(VulkanDevice &device, VulkanSwapchain &swapchain,
               assetManager_
 #endif
   );
-  
+
   setupGameObjects();
   createUniformBuffers(); // uniform cho mỗi gameObject
   createDescriptorPool(); // tao descriptor pool luu cac descriptor set (1:n -
@@ -68,16 +68,26 @@ void VulkanRenderer::init(VulkanDevice &device, VulkanSwapchain &swapchain,
                        // render chi 1 khung hinh tai 1 thoi diem giu gpu cpu
                        // dong bo)
 
-  //init particle system
+  // init particle system
   auto computeSpv = readFile("shaders/compute.spv"
 #if defined(__ANDROID__)
                              ,
                              assetManager_
 #endif
   );
+
   particleSystem_.init(*device_, *memory_, commandPool_,
                        swapchain_->getImageFormat(), texture_.getDepthFormat(),
                        device_->msaaSamples_, computeSpv);
+
+  // khoi tao worker threads cho particleSystem.
+  // PARTICLE_COUNT=8192 chia het cho 2/4/8 → chon 4 thread (2048
+  // particle/thread). hardware_concurrency()/2 de khong chiem het core
+  // (con dung graphics + main).
+  uint32_t threadCount =
+      std::min<uint32_t>(MAX_COMPUTE_THREADS,
+                         std::max(1u, std::thread::hardware_concurrency() / 2));
+  particleSystem_.initThreads(threadCount, queueSubmitMutex_);
 }
 
 void VulkanRenderer::createDescriptorSetLayout() {
@@ -299,14 +309,16 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
       vk::PipelineStageFlagBits2::eColorAttachmentOutput, // dstStage
       vk::ImageAspectFlagBits::eColor, 1);
   // transition for the MSAA color image
-  transition_image_layout(*texture_.getColorImage(), vk::ImageLayout::eUndefined,
+  transition_image_layout(*texture_.getColorImage(),
+                          vk::ImageLayout::eUndefined,
                           vk::ImageLayout::eColorAttachmentOptimal, {},
                           vk::AccessFlagBits2::eColorAttachmentWrite,
                           vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                           vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                           vk::ImageAspectFlagBits::eColor, 1);
   // transition for the depth image
-  transition_image_layout(*texture_.getDepthImage(), vk::ImageLayout::eUndefined,
+  transition_image_layout(*texture_.getDepthImage(),
+                          vk::ImageLayout::eUndefined,
                           vk::ImageLayout::eDepthAttachmentOptimal,
                           vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
                           vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
@@ -346,25 +358,25 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
   commandBuffer.beginRendering(renderingInfo);
   // VẼ MULTIPLE OBJECTS — mới
   commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics,
-    *graphicsPipeline_);
-    
-    commandBuffer.setViewport(
+                             *graphicsPipeline_);
+
+  commandBuffer.setViewport(
       0, vk::Viewport(
-        0.0f, 0.0f, static_cast<float>(swapchain_->getExtent().width),
+             0.0f, 0.0f, static_cast<float>(swapchain_->getExtent().width),
              static_cast<float>(swapchain_->getExtent().height), 0.0f, 1.0f));
   commandBuffer.setScissor(
-    0, vk::Rect2D(vk::Offset2D(0, 0), swapchain_->getExtent()));
-    // Bind vertex/index buffer 1 lần (chia sẻ giữa các objects)
+      0, vk::Rect2D(vk::Offset2D(0, 0), swapchain_->getExtent()));
+  // Bind vertex/index buffer 1 lần (chia sẻ giữa các objects)
   model_.bind(commandBuffer);
   // Loop draw từng object
   for (auto &obj : gameObjects_) {
     commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-      pipelineLayout_, 0,
-      *obj.descriptorSets[frameIndex_], nullptr);
-      commandBuffer.drawIndexed(model_.getIndexCount(), 1, 0, 0, 0);
-    }
-    // VẼ PARTICLE SYSTEM
-    particleSystem_.recordDraw(commandBuffer, frameIndex_);
+                                     pipelineLayout_, 0,
+                                     *obj.descriptorSets[frameIndex_], nullptr);
+    commandBuffer.drawIndexed(model_.getIndexCount(), 1, 0, 0, 0);
+  }
+  // VẼ PARTICLE SYSTEM
+  particleSystem_.recordDraw(commandBuffer, frameIndex_);
   commandBuffer.endRendering();
   // After rendering, transition the swapchain image to PRESENT_SRC
   transition_image_layout(
@@ -531,7 +543,6 @@ void VulkanRenderer::createSyncObjects() {
 //   endSingleTimeCommands(commandBuffer);
 // }
 
-
 /// Tạo uniform buffers với persistent mapping cho toàn bộ vòng đời ứng dụng
 void VulkanRenderer::createUniformBuffers() {
   // persistent mapping use for all instance through app life time , not remap
@@ -564,8 +575,7 @@ void VulkanRenderer::createDescriptorPool() {
   // shader
   std::array poolSize{
       vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer,
-                             MAX_FRAMES_IN_FLIGHT *
-                                 MAX_OBJECTS ), 
+                             MAX_FRAMES_IN_FLIGHT * MAX_OBJECTS),
       vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler,
                              MAX_FRAMES_IN_FLIGHT * MAX_OBJECTS),
       vk::DescriptorPoolSize(vk::DescriptorType::eStorageBuffer,
@@ -573,7 +583,7 @@ void VulkanRenderer::createDescriptorPool() {
                                  2)}; // compute SSBO ping-pong
   vk::DescriptorPoolCreateInfo poolInfo{
       .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-      .maxSets = MAX_FRAMES_IN_FLIGHT * MAX_OBJECTS , 
+      .maxSets = MAX_FRAMES_IN_FLIGHT * MAX_OBJECTS,
       .poolSizeCount = static_cast<uint32_t>(poolSize.size()),
       .pPoolSizes = poolSize.data()};
   descriptorPool_ = vk::raii::DescriptorPool(device_->getDevice(), poolInfo);
@@ -696,16 +706,25 @@ void VulkanRenderer::drawFrame() {
   }
 
   particleSystem_.updateComputeUniformBuffer(frameIndex_);
-  device_->getDevice().resetFences(*particleSystem_.computeInFlightFence(frameIndex_));
-  particleSystem_.computeCommandBuffer(frameIndex_).reset();
-  particleSystem_.recordComputeCommandBuffer(frameIndex_);
+  device_->getDevice().resetFences(
+      *particleSystem_.computeInFlightFence(frameIndex_));
+  // dispatch multithreaded thay cho recordComputeCommandBuffer don gian.
+  // worker threads record song song theo range particle. tra ve N cmd buffers
+  // (N = threadCount_) de submit cung 1 lan.
+  auto computeCmdBuffers = particleSystem_.dispatchMultithreaded(frameIndex_);
   vk::SubmitInfo computeSubmitInfo{
-      .commandBufferCount = 1,
-      .pCommandBuffers = &*particleSystem_.computeCommandBuffer(frameIndex_),
+      .commandBufferCount = static_cast<uint32_t>(computeCmdBuffers.size()),
+      .pCommandBuffers = computeCmdBuffers.data(),
       .signalSemaphoreCount = 1,
-      .pSignalSemaphores = &*particleSystem_.computeFinishedSemaphore(frameIndex_)};
-  device_->getGraphicsQueue().submit(computeSubmitInfo,
-                                     *particleSystem_.computeInFlightFence(frameIndex_));
+      .pSignalSemaphores =
+          &*particleSystem_.computeFinishedSemaphore(frameIndex_)};
+  // mutex bao ve queue.submit() (Vulkan spec: vk::Queue khong thread-safe)
+  {
+    std::lock_guard<std::mutex> lock(queueSubmitMutex_);
+    device_->getGraphicsQueue().submit(
+        computeSubmitInfo, *particleSystem_.computeInFlightFence(frameIndex_));
+  }
+
   // GRAPHICS
   auto fenceResult = device_->getDevice().waitForFences(
       *inFlightFences_[frameIndex_], vk::True, UINT64_MAX);
@@ -731,9 +750,10 @@ void VulkanRenderer::drawFrame() {
   updateUniformBuffer(frameIndex_);
 
   // gui bo dem lenh
-  vk::Semaphore waitSemaphores[] = {// mảng 2 phần tử
-                                    *particleSystem_.computeFinishedSemaphore(frameIndex_),
-                                    *presentCompleteSemaphores_[frameIndex_]};
+  vk::Semaphore waitSemaphores[] = {
+      // mảng 2 phần tử
+      *particleSystem_.computeFinishedSemaphore(frameIndex_),
+      *presentCompleteSemaphores_[frameIndex_]};
   vk::PipelineStageFlags waitStages[] = {
       // mảng 2 phần tử
       vk::PipelineStageFlagBits::eVertexInput,
@@ -746,8 +766,13 @@ void VulkanRenderer::drawFrame() {
       .pCommandBuffers = &*commandBuffers_[frameIndex_],
       .signalSemaphoreCount = 1,
       .pSignalSemaphores = &*renderFinishedSemaphores_[imageIndex]};
-  device_->getGraphicsQueue().submit(graphicsSubmitInfo,
-                                     *inFlightFences_[frameIndex_]);
+
+  // mutex bao ve queue.submit() (Vulkan spec: vk::Queue khong thread-safe)
+  {
+    std::lock_guard<std::mutex> lock(queueSubmitMutex_);
+    device_->getGraphicsQueue().submit(graphicsSubmitInfo,
+                                       *inFlightFences_[frameIndex_]);
+  }
 
   // PRESENT
   try {
@@ -757,7 +782,12 @@ void VulkanRenderer::drawFrame() {
         .swapchainCount = 1,
         .pSwapchains = &*swapchain_->getSwapChain(),
         .pImageIndices = &imageIndex};
-    result = device_->getGraphicsQueue().presentKHR(presentInfoKHR);
+    // mutex bao ve presentKHR() (cung Queue API, can lock)
+    {
+      std::lock_guard<std::mutex> lock(queueSubmitMutex_);
+      result = device_->getGraphicsQueue().presentKHR(presentInfoKHR);
+    }
+
     if (result == vk::Result::eErrorOutOfDateKHR ||
         result == vk::Result::eSuboptimalKHR) {
       recreateSwapChain();
@@ -778,14 +808,13 @@ void VulkanRenderer::drawFrame() {
 
 void VulkanRenderer::cleanupSwapChainResources() {
   texture_.resetSwapChainResources();
-  
+
   commandBuffers_.clear();
   renderFinishedSemaphores_.clear();
   presentCompleteSemaphores_.clear();
   inFlightFences_.clear();
-  
+
   particleSystem_.resetSwapChainResources();
-  
 }
 
 void VulkanRenderer::createSwapChainDependentResources() {

@@ -56,6 +56,13 @@ constexpr int MAX_FRAMES_IN_FLIGHT =
     2; ///< cho phep nhieu hung hinh xu li dong
        ///< thoi max la 2 thay vi doi tung khung
 
+/// So worker thread toi da cho compute multithreading.
+/// Cap = 4 vi:
+/// - PARTICLE_COUNT (8192) chia het cho 1/2/4/8
+/// - >4 thread → overhead sync (mutex/CV) > work, lai cham hon
+/// - Cap nay tranh tao qua nhieu thread tren may CPU 16/32 core
+constexpr uint32_t MAX_COMPUTE_THREADS = 4;
+
 struct Vertex {
   glm::vec3 pos;
   glm::vec3 color;

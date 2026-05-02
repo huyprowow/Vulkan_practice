@@ -81,6 +81,7 @@ add_library(Vulkan_Learn_Android SHARED
     "${PROJ_ROOT}/src/render/vulkan/VulkanModel.cpp"
     "${PROJ_ROOT}/src/render/vulkan/VulkanParticleSystem.cpp"
     "${PROJ_ROOT}/src/render/vulkan/VulkanMemory.cpp"
+    "${PROJ_ROOT}/src/render/vulkan/ThreadCommandPool.cpp"
 )
 target_link_options(Vulkan_Learn_Android PRIVATE
     "-u" "Java_com_google_androidgamesdk_GameActivity_initializeNativeCode"
