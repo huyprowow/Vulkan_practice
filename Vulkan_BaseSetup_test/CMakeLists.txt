@@ -152,6 +152,8 @@ function(add_to_build CPP_FILE)
     src/render/vulkan/VulkanMemory.cpp
     src/render/vulkan/VulkanTexture.cpp
     src/render/vulkan/VulkanModel.cpp
+    src/render/vulkan/MeshData.cpp
+    src/render/vulkan/VulkanScene.cpp
     src/render/vulkan/VulkanParticleSystem.cpp
     src/render/vulkan/ThreadCommandPool.cpp
   )

@@ -9,6 +9,7 @@
 #include "VulkanSwapchain.hpp"
 #include "VulkanTexture.hpp"
 #include "VulkanModel.hpp"
+#include "VulkanScene.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -43,7 +44,7 @@ private:
   IWindow *window_ = nullptr;
   std::unique_ptr<VulkanMemory> memory_=nullptr;
   VulkanTexture texture_;
-  VulkanModel model_;
+  VulkanScene scene_;
   VulkanParticleSystem particleSystem_;
 
 #if defined(__ANDROID__)
@@ -69,7 +70,6 @@ private:
   vk::raii::DescriptorPool descriptorPool_{nullptr};
   std::vector<vk::raii::DescriptorSet> descriptorSets_;
 
-  std::vector<GameObject> gameObjects_;
 
   uint32_t frameIndex_ = 0;
   // mutex bao ve vk::Queue.submit() / presentKHR() (Vulkan spec: Queue khong
@@ -101,7 +101,6 @@ private:
                                vk::PipelineStageFlags2 dstStageMask,
                                vk::ImageAspectFlags image_aspect_flags,
                                uint32_t mipLevels);
-  void setupGameObjects();
   void createUniformBuffers();
   void createDescriptorPool();
   void createDescriptorSets();

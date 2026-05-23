@@ -79,6 +79,8 @@ add_library(Vulkan_Learn_Android SHARED
     "${PROJ_ROOT}/src/render/vulkan/VulkanRenderer.cpp"
     "${PROJ_ROOT}/src/render/vulkan/VulkanTexture.cpp"
     "${PROJ_ROOT}/src/render/vulkan/VulkanModel.cpp"
+    "${PROJ_ROOT}/src/render/vulkan/MeshData.cpp"
+    "${PROJ_ROOT}/src/render/vulkan/VulkanScene.cpp"
     "${PROJ_ROOT}/src/render/vulkan/VulkanParticleSystem.cpp"
     "${PROJ_ROOT}/src/render/vulkan/VulkanMemory.cpp"
     "${PROJ_ROOT}/src/render/vulkan/ThreadCommandPool.cpp"

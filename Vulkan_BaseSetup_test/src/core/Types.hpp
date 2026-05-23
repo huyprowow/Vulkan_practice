@@ -67,26 +67,30 @@ struct Vertex {
   glm::vec3 pos;
   glm::vec3 color;
   glm::vec2 texCoord;
+  glm::vec3 normal;
 
   static vk::VertexInputBindingDescription getBindingDescription() {
     return {0, sizeof(Vertex), vk::VertexInputRate::eVertex};
   }
 
-  static std::array<vk::VertexInputAttributeDescription, 3>
+  static std::array<vk::VertexInputAttributeDescription, 4>
   getAttributeDescriptions() {
     return {vk::VertexInputAttributeDescription(
                 0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos)),
             vk::VertexInputAttributeDescription(
                 1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color)),
             vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32Sfloat,
-                                                offsetof(Vertex, texCoord))};
+                                                offsetof(Vertex, texCoord)),
+            vk::VertexInputAttributeDescription(3, 0, vk::Format::eR32G32B32Sfloat,
+                                                offsetof(Vertex, normal))
+                                              };
   }
 
   bool operator==(
       const Vertex &other) const { ///< vi Vertex tu dinh nghia nen phai trien
                                    ///< khai de dung voi unordered_map (lam key)
     return pos == other.pos && color == other.color &&
-           texCoord == other.texCoord;
+           texCoord == other.texCoord && normal == other.normal;
   }
 };
 
@@ -95,10 +99,11 @@ template <>
 struct hash<Vertex> { ///< vi Vertex tu dinh nghia nen phai trien khai de dung
                       ///< voi unordered_map (lam key)
   size_t operator()(Vertex const &vertex) const {
-    return ((hash<glm::vec3>()(vertex.pos) ^
-             (hash<glm::vec3>()(vertex.color) << 1)) >>
-            1) ^
-           (hash<glm::vec2>()(vertex.texCoord) << 1);
+    size_t h = hash<glm::vec3>()(vertex.pos);
+    h^=(hash<glm::vec3>()(vertex.color) << 1);
+    h^=(hash<glm::vec2>()(vertex.texCoord) << 2);
+    h^=(hash<glm::vec3>()(vertex.normal) << 3);
+    return h;
   }
 };
 } // namespace std

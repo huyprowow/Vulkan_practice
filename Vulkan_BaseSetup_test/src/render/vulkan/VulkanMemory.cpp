@@ -17,6 +17,17 @@ void VulkanMemory::createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
       .allocationSize = memRequirements.size,
       .memoryTypeIndex =
           findMemoryType(memRequirements.memoryTypeBits, properties)};
+
+  // chain MemoryAllocateFlagsInfo khi buffer cần device address
+  // BLAS sẽ gọi device.getBufferAddressKHR(buffer) để lấy
+  // VkDeviceAddress làm input cho geometry. Theo spec, memory backing buffer
+  // có usage eShaderDeviceAddress PHẢI được allocate với flag
+  // eDeviceAddress, nếu không getBufferAddressKHR trả 0 hoặc crash.
+  vk::MemoryAllocateFlagsInfo allocFlagsInfo{};
+  if (usage & vk::BufferUsageFlagBits::eShaderDeviceAddress) {
+    allocFlagsInfo.flags = vk::MemoryAllocateFlagBits::eDeviceAddress;
+    allocInfo.pNext = &allocFlagsInfo;
+  }
   bufferMemory = vk::raii::DeviceMemory(device_->getDevice(), allocInfo);
   buffer.bindMemory(*bufferMemory, 0);
 }

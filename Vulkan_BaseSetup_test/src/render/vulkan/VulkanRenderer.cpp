@@ -49,14 +49,13 @@ void VulkanRenderer::init(VulkanDevice &device, VulkanSwapchain &swapchain,
 #endif
   );
 
-  model_.load(*device_, *memory_, MODEL_PATH
+  scene_.init(*device_, *memory_, MODEL_PATH
 #if defined(__ANDROID__)
               ,
               assetManager_
 #endif
   );
 
-  setupGameObjects();
   createUniformBuffers(); // uniform cho mỗi gameObject
   createDescriptorPool(); // tao descriptor pool luu cac descriptor set (1:n -
   // pool:set)
@@ -367,13 +366,13 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
   commandBuffer.setScissor(
       0, vk::Rect2D(vk::Offset2D(0, 0), swapchain_->getExtent()));
   // Bind vertex/index buffer 1 lần (chia sẻ giữa các objects)
-  model_.bind(commandBuffer);
+  scene_.model().bind(commandBuffer);
   // Loop draw từng object
-  for (auto &obj : gameObjects_) {
+  for (auto &obj : scene_.gameObjects()) {
     commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
                                      pipelineLayout_, 0,
                                      *obj.descriptorSets[frameIndex_], nullptr);
-    commandBuffer.drawIndexed(model_.getIndexCount(), 1, 0, 0, 0);
+    commandBuffer.drawIndexed(scene_.model().getIndexCount(), 1, 0, 0, 0);
   }
   // VẼ PARTICLE SYSTEM
   particleSystem_.recordDraw(commandBuffer, frameIndex_);
@@ -548,7 +547,7 @@ void VulkanRenderer::createUniformBuffers() {
   // persistent mapping use for all instance through app life time , not remap
   // effect perf
   // For each game object
-  for (auto &gameObject : gameObjects_) {
+  for (auto &gameObject : scene_.gameObjects()) {
     gameObject.uniformBuffers.clear();
     gameObject.uniformBuffersMemory.clear();
     gameObject.uniformBuffersMapped.clear();
@@ -591,7 +590,7 @@ void VulkanRenderer::createDescriptorPool() {
 
 void VulkanRenderer::createDescriptorSets() {
   // For each game object
-  for (auto &gameObject : gameObjects_) {
+  for (auto &gameObject : scene_.gameObjects()) {
     // Create descriptor sets for each frame in flight
     std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT,
                                                  *descriptorSetLayout_);
@@ -633,24 +632,7 @@ void VulkanRenderer::createDescriptorSets() {
   }
 }
 
-/// Initialize the game objects with different positions, rotations, and scales
-void VulkanRenderer::setupGameObjects() {
-  gameObjects_.resize(MAX_OBJECTS);
-  // Object 1 - Center
-  gameObjects_[0].position = {0.0f, 0.0f, 0.0f};
-  gameObjects_[0].rotation = {0.0f, 0.0f, 0.0f};
-  gameObjects_[0].scale = {1.0f, 1.0f, 1.0f};
 
-  // Object 2 - Left
-  gameObjects_[1].position = {-2.0f, 0.0f, -1.0f};
-  gameObjects_[1].rotation = {0.0f, glm::radians(45.0f), 0.0f};
-  gameObjects_[1].scale = {0.75f, 0.75f, 0.75f};
-
-  // Object 3 - Right
-  gameObjects_[2].position = {2.0f, 0.0f, -1.0f};
-  gameObjects_[2].rotation = {0.0f, glm::radians(-45.0f), 0.0f};
-  gameObjects_[2].scale = {0.75f, 0.75f, 0.75f};
-}
 
 /// Cập nhật uniform buffer: model/view/projection matrix mỗi frame
 void VulkanRenderer::updateUniformBuffer(
@@ -659,6 +641,8 @@ void VulkanRenderer::updateUniformBuffer(
   static auto startTime = std::chrono::high_resolution_clock::now();
   auto currentTime = std::chrono::high_resolution_clock::now();
   float time = std::chrono::duration<float>(currentTime - startTime).count();
+  
+  scene_.update(0.0f);
 
   // Camera and projection matrices (shared by all objects)
   glm::mat4 view =
@@ -672,10 +656,7 @@ void VulkanRenderer::updateUniformBuffer(
   proj[1][1] *= -1; // Flip Y for Vulkan
 
   // Update uniform buffers for each object
-  for (auto &gameObject : gameObjects_) {
-    // Apply continuous rotation to the object
-    gameObject.rotation.y += 0.001f; // Slow rotation around Y axis
-
+  for (auto &gameObject : scene_.gameObjects()) {
     // Get the model matrix for this object
     glm::mat4 model = gameObject.getModelMatrix();
 
@@ -850,18 +831,9 @@ void VulkanRenderer::cleanup() {
   cleanupSwapChainResources();
   particleSystem_.cleanup();
   texture_.cleanup();
-  // graphics
-  for (auto &obj : gameObjects_) {
-    obj.descriptorSets.clear();
-    obj.uniformBuffersMapped.clear();
-    obj.uniformBuffersMemory.clear();
-    obj.uniformBuffers.clear();
-  }
-  gameObjects_.clear();
+  scene_.cleanup();
 
   descriptorPool_ = nullptr;
-
-  model_.cleanup();
 
   graphicsPipeline_ = nullptr;
   pipelineLayout_ = nullptr;

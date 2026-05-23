@@ -31,13 +31,14 @@ note: using terminal "x64 Native Tools Command Prompt for VS 2022" window if use
   ex:  
    `cmake -G Ninja -B build -DCMAKE_TOOLCHAIN_FILE=C:/Users/ADMIN/Data/Lean/vcpkg/scripts/buildsystems/vcpkg.cmake -DENABLE_DX12=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON`  
    `cmake -G "Visual Studio 17 2022" -B build-vs -DCMAKE_TOOLCHAIN_FILE=C:/Users/ADMIN/Data/Lean/vcpkg/scripts/buildsystems/vcpkg.cmake`
-  note: for apple may be need add custom triple:
-    `cmake -G Ninja -B build \
-    -DCMAKE_TOOLCHAIN_FILE=$HOME/vcpkg/scripts/buildsystems/vcpkg.cmake \
-    -DVCPKG_OVERLAY_TRIPLETS=Cmake\custom-triplets \
-    -DCMAKE_BUILD_TYPE=Release`
 
-- (option) compiler shader:
+  note: for apple may be need add custom triple:
+  `cmake -G Ninja -B build \
+  -DCMAKE_TOOLCHAIN_FILE=$HOME/vcpkg/scripts/buildsystems/vcpkg.cmake \
+  -DVCPKG_OVERLAY_TRIPLETS=Cmake\custom-triplets \
+  -DCMAKE_BUILD_TYPE=Release`
+
+- (option - included in cmake build) compiler shader:
   change path slang compiler if need
   win: `./compile.bat`
   linux:
@@ -68,7 +69,7 @@ cmake --build build --target docs
   - NDK version: `30.0.14904198 rc1`
   - android SDK: `36` min android SDK: `24`
 
-- Sync grandle, Build/Run from Android Studio (or gradlew :app:assembleDebug)
+- Sync grandle, Build/Run from Android Studio (or gradlew :app:assembleDebug)  
   note: Native build uses:
   - `android/app/src/main/cpp/CMakeLists.txt`
   - outputs shaders to `.externalNativeBuild/.../shaders`
@@ -129,5 +130,4 @@ got 2 entry point for android and desktop
 
 shader code share cross platform in `shaders` folder, Compile shader when cmake build, (android: after cmake build shader, build tool link/map to apk resource), then read shader built for each platform
 
-cmake manager, find lib and install from git if fallback
-game_activity_bridge.cpp not use, use `android_native_app_glue.c`,`android_native_app_glue.h` for ndk version installed `30.0.14904198 rc1`
+cmake manager, find lib and install from git if fallback, game_activity_bridge.cpp not use, use `android_native_app_glue.c`,`android_native_app_glue.h` for ndk version installed `30.0.14904198 rc1`
