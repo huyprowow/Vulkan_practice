@@ -21,9 +21,16 @@ void VulkanDevice::init(const vk::raii::Instance &instance,
   requiredDeviceExtension_ = {
       vk::KHRSwapchainExtensionName, vk::KHRSpirv14ExtensionName,
       vk::KHRSynchronization2ExtensionName,
-      vk::KHRCreateRenderpass2ExtensionName
+      vk::KHRCreateRenderpass2ExtensionName,
+#if !defined(__ANDROID__)
+      // RT extensions — chỉ request trên desktop.
+      // Android (Adreno/Mali) phần lớn không hỗ trợ ray query → skip để
+      // device vẫn pass isDeviceSuitable
+      vk::KHRAccelerationStructureExtensionName, vk::KHRRayQueryExtensionName,
+      vk::KHRBufferDeviceAddressExtensionName,
+      vk::KHRDeferredHostOperationsExtensionName,
+#endif
 #ifdef __APPLE__
-      ,
       "VK_KHR_portability_subset" // Required for MoltenVK devices
 #endif
   };
@@ -107,8 +114,10 @@ void VulkanDevice::pickPhysicalDevice(const vk::raii::Instance &instance,
 
     auto features = device.template getFeatures2<
         vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
-        vk::PhysicalDeviceVulkan13Features,
-        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+        vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
+        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
+        vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
+        vk::PhysicalDeviceRayQueryFeaturesKHR>();
     bool supportsRequiredFeatures =
         features.template get<vk::PhysicalDeviceVulkan11Features>()
             .shaderDrawParameters &&
@@ -118,7 +127,28 @@ void VulkanDevice::pickPhysicalDevice(const vk::raii::Instance &instance,
             .synchronization2 &&
         features
             .template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
-            .extendedDynamicState;
+            .extendedDynamicState
+#if !defined(__ANDROID__)
+        // kiểm tra RT + descriptor indexing trên desktop.
+        //  Descriptor indexing flags chuẩn bị sẵn cho bindless
+        && features.template get<vk::PhysicalDeviceVulkan12Features>()
+               .bufferDeviceAddress &&
+        features.template get<vk::PhysicalDeviceVulkan12Features>()
+            .runtimeDescriptorArray &&
+        features.template get<vk::PhysicalDeviceVulkan12Features>()
+            .descriptorBindingPartiallyBound &&
+        features.template get<vk::PhysicalDeviceVulkan12Features>()
+            .descriptorBindingVariableDescriptorCount &&
+        features.template get<vk::PhysicalDeviceVulkan12Features>()
+            .descriptorBindingSampledImageUpdateAfterBind &&
+        features.template get<vk::PhysicalDeviceVulkan12Features>()
+            .shaderSampledImageArrayNonUniformIndexing &&
+        features
+            .template get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>()
+            .accelerationStructure &&
+        features.template get<vk::PhysicalDeviceRayQueryFeaturesKHR>().rayQuery
+#endif
+        ;
 
     // also require that at least one queue family supports present on this
     // surface
@@ -183,19 +213,41 @@ void VulkanDevice::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
   }
 
   // truy van tat ca chuc nang toi vk1.3 vi mac dinh chi vk1.0
-  vk::StructureChain<vk::PhysicalDeviceFeatures2,
-                     vk::PhysicalDeviceVulkan11Features,
-                     vk::PhysicalDeviceVulkan13Features,
-                     vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
+  vk::StructureChain<
+      vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
+      vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
+      vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
+#if !defined(__ANDROID__)
+      ,
+      vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
+      vk::PhysicalDeviceRayQueryFeaturesKHR
+#endif
+      >
       featureChain = {
-          {.features = {.sampleRateShading = true,
-                        .samplerAnisotropy =
-                            true}},       // vk::PhysicalDeviceFeatures2
-          {.shaderDrawParameters = true}, // vk::PhysicalDeviceVulkan11Features
-          {.synchronization2 = true,
-           .dynamicRendering = true}, // vk::PhysicalDeviceVulkan13Features
-          {.extendedDynamicState =
-               true} // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
+          // vk::PhysicalDeviceFeatures2
+          {.features = {.sampleRateShading = true, .samplerAnisotropy = true}},
+          // vk::PhysicalDeviceVulkan11Features
+          {.shaderDrawParameters = true},
+          // Vulkan12Features - bufferDeviceAddress (BLAS input)
+          // + descriptor indexing (bindless)
+          // Field order tự do, chỉ cần là member của struct
+          {.shaderSampledImageArrayNonUniformIndexing = true,
+           .descriptorBindingSampledImageUpdateAfterBind = true,
+           .descriptorBindingPartiallyBound = true,
+           .descriptorBindingVariableDescriptorCount = true,
+           .runtimeDescriptorArray = true,
+           .bufferDeviceAddress = true},
+          // vk::PhysicalDeviceVulkan13Features
+          {.synchronization2 = true, .dynamicRendering = true},
+          // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
+          {.extendedDynamicState = true}
+#if !defined(__ANDROID__)
+          ,
+          // vk::PhysicalDeviceAccelerationStructureFeaturesKHR
+          {.accelerationStructure = true},
+          // vk::PhysicalDeviceRayQueryFeaturesKHR
+          {.rayQuery = true}
+#endif
       };
 
   // create a VulkanDevice
@@ -215,6 +267,17 @@ void VulkanDevice::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
   device_ = vk::raii::Device(physicalDevice_, deviceCreateInfo);
   graphicsQueue_ =
       vk::raii::Queue(device_, queueIndex_, 0); // hang doi lenh do hoa
+
+  // set cờ RT support theo build target.
+  // Nếu đến được đây trên desktop, mọi feature/extension RT đã enable thành
+  // công (vì isDeviceSuitable đã check ở pickPhysicalDevice). Trên Android luôn
+  // false.
+#if !defined(__ANDROID__)
+  rayTracingSupported_ = true;
+  std::cout << "Ray tracing: ENABLED" << std::endl;
+#else
+  std::cout << "Ray tracing: disabled (Android build)" << std::endl;
+#endif
 }
 
 // tim queue family ho tro cac lenh do hoa

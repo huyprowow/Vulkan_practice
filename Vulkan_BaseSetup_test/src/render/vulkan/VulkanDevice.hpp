@@ -16,6 +16,7 @@ public:
   const vk::raii::Device &getDevice() const { return device_; }
   const vk::raii::Queue &getGraphicsQueue() const { return graphicsQueue_; }
   uint32_t getQueueIndex() const { return queueIndex_; }
+  bool isRayTracingSupported() const { return rayTracingSupported_; }
   const std::vector<const char *> &getRequiredDeviceExtension() const {
     return requiredDeviceExtension_;
   }
@@ -29,6 +30,7 @@ private:
   vk::raii::Queue graphicsQueue_{nullptr};
   uint32_t queueIndex_ = ~0u;
   std::vector<const char *> requiredDeviceExtension_;
+  bool rayTracingSupported_ = false;
 
   void pickPhysicalDevice(const vk::raii::Instance &instance,
                           const vk::raii::SurfaceKHR &surface);
