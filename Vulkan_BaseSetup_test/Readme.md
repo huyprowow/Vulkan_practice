@@ -117,7 +117,7 @@ run directly by android studio with emulator or copy .apk file then install in a
 go to android build folder: `android\app\build\` apk file will in: `android\app\build\outputs\apk\debug\app-debug.apk` or `android\app\build\outputs\apk\release\app-release.apk`
 
 #### b. ios
-open xcode project change target device and click play to build and run
+connect iphone to machine by cable then open xcode project change target device chose iphone name and click play to build and run
 
 ### 3.debug
 
