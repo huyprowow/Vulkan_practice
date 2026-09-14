@@ -204,6 +204,10 @@ function(add_to_build CPP_FILE)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_CPP20_MODULES=1)
   endif()
 
+  if(IOS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE VULKAN_IOS=1)
+  endif()
+
   if(WIN32)
     if(${CMAKE_GENERATOR} MATCHES "Visual Studio.*")
       set_target_properties(${PROJECT_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/${CHAPTER_NAME}")

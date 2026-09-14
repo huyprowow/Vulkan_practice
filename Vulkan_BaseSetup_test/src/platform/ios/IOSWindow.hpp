@@ -1,8 +1,8 @@
 #pragma once
 
 #include "../IWindow.hpp"
-
-// CAMetalLayer is kept opaque here so engine sources remain C++.
+//IOS tuong tu android k dungf glfw neen phai tao cua so rieng cho ios
+// CAMetalLayer is kept opaque here so engine sources remain C++. 
 class IOSWindow final : public IWindow {
 public:
   void setMetalLayer(void *layer) { metalLayer_ = layer; }

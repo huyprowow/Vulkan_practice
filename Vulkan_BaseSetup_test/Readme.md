@@ -87,18 +87,21 @@ note:
     `adb shell getprop ro.product.cpu.abilist`
 
 #### c. ios
-require: xcode install
 
-xcode build:
-cmake -B build_xcode -G Xcode -DCMAKE_SYSTEM_NAME=iOS .
-open it by xcode
+if have mac
+require: xcode install, connect iphone to mac
+if not have mac: 
+- install vmware -> install macos use auto unlocker to unlock VMware mac os and iso file create vm -> install xcode or install .xip from apple Developer->install xcode
+(option) ipa install to install -> install altstore -> install altstor, .ipa app
 
-  Build:
-
-  cd /Users/huyprowow/Documents/Vulkan_practice/Vulkan_BaseSetup_test
+*xcode build*:
+ cd /Users/huyprowow/Documents/Vulkan_practice/Vulkan_BaseSetup_test
 
   cmake --fresh --preset ios-device
   cmake --build build_xcode_ios --config Debug
+
+-> open xcodeproject in built folder by xcode then build
+ 
 ### 2.run
 
 #### a. desktop
@@ -112,6 +115,9 @@ then
 
 run directly by android studio with emulator or copy .apk file then install in android device:
 go to android build folder: `android\app\build\` apk file will in: `android\app\build\outputs\apk\debug\app-debug.apk` or `android\app\build\outputs\apk\release\app-release.apk`
+
+#### b. ios
+open xcode project change target device and click play to build and run
 
 ### 3.debug
 

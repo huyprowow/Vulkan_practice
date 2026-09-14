@@ -22,9 +22,9 @@ void VulkanDevice::init(const vk::raii::Instance &instance,
       vk::KHRSwapchainExtensionName, vk::KHRSpirv14ExtensionName,
       vk::KHRSynchronization2ExtensionName,
       vk::KHRCreateRenderpass2ExtensionName,
-#if !defined(__ANDROID__)
+#if !defined(__ANDROID__) && !defined(VULKAN_IOS)
       // RT extensions — chỉ request trên desktop.
-      // Android (Adreno/Mali) phần lớn không hỗ trợ ray query → skip để
+      // Android/iOS phần lớn không hỗ trợ ray query → skip để
       // device vẫn pass isDeviceSuitable
       vk::KHRAccelerationStructureExtensionName, vk::KHRRayQueryExtensionName,
       vk::KHRBufferDeviceAddressExtensionName,
@@ -128,7 +128,7 @@ void VulkanDevice::pickPhysicalDevice(const vk::raii::Instance &instance,
         features
             .template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
             .extendedDynamicState
-#if !defined(__ANDROID__)
+#if !defined(__ANDROID__) && !defined(VULKAN_IOS)
         // kiểm tra RT + descriptor indexing trên desktop.
         //  Descriptor indexing flags chuẩn bị sẵn cho bindless
         && features.template get<vk::PhysicalDeviceVulkan12Features>()
@@ -217,7 +217,7 @@ void VulkanDevice::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
       vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
       vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
       vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
-#if !defined(__ANDROID__)
+#if !defined(__ANDROID__) && !defined(VULKAN_IOS)
       ,
       vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
       vk::PhysicalDeviceRayQueryFeaturesKHR
@@ -241,7 +241,7 @@ void VulkanDevice::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
           {.synchronization2 = true, .dynamicRendering = true},
           // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
           {.extendedDynamicState = true}
-#if !defined(__ANDROID__)
+#if !defined(__ANDROID__) && !defined(VULKAN_IOS)
           ,
           // vk::PhysicalDeviceAccelerationStructureFeaturesKHR
           {.accelerationStructure = true},
@@ -272,9 +272,11 @@ void VulkanDevice::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
   // Nếu đến được đây trên desktop, mọi feature/extension RT đã enable thành
   // công (vì isDeviceSuitable đã check ở pickPhysicalDevice). Trên Android luôn
   // false.
-#if !defined(__ANDROID__)
+#if !defined(__ANDROID__) && !defined(VULKAN_IOS)
   rayTracingSupported_ = true;
   std::cout << "Ray tracing: ENABLED" << std::endl;
+#elif defined(VULKAN_IOS)
+  std::cout << "Ray tracing: disabled (iOS build)" << std::endl;
 #else
   std::cout << "Ray tracing: disabled (Android build)" << std::endl;
 #endif

@@ -8,10 +8,10 @@
 #include <fstream>
 #include <iostream>
 
-#if !defined(__ANDROID__)
+#if !defined(__ANDROID__) && !defined(VULKAN_IOS)
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
-#endif
+#endif			
 
 #if defined(__ANDROID__)
 #include <android/asset_manager.h>
@@ -810,7 +810,7 @@ void VulkanRenderer::recreateSwapChain() {
   window_->getFramebufferSize(width, height);
   while (width == 0 || height == 0) {
     window_->getFramebufferSize(width, height);
-#if !defined(__ANDROID__) && !defined(VULKAN_LEARN_IOS)
+#if !defined(__ANDROID__) && !defined(VULKAN_IOS)
     glfwWaitEvents();
 #endif
   }
