@@ -90,12 +90,12 @@ void VulkanRenderer::init(VulkanDevice &device, VulkanSwapchain &swapchain,
 }
 
 void VulkanRenderer::createDescriptorSetLayout() {
-  std::array bindings = {
-      vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1,
-                                     vk::ShaderStageFlagBits::eVertex, nullptr),
-      vk::DescriptorSetLayoutBinding(
+std::array bindings = {
+      vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eUniformBuffer, 1,
+                                      vk::ShaderStageFlagBits::eVertex, nullptr},
+      vk::DescriptorSetLayoutBinding{
           1, vk::DescriptorType::eCombinedImageSampler, 1,
-          vk::ShaderStageFlagBits::eFragment, nullptr)};
+          vk::ShaderStageFlagBits::eFragment, nullptr}};
 
   vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = bindings.size(),
                                                .pBindings = bindings.data()};
@@ -327,7 +327,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
                               vk::PipelineStageFlagBits2::eLateFragmentTests,
                           vk::ImageAspectFlagBits::eDepth, 1);
   vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
-  vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
+  vk::ClearValue clearDepth = vk::ClearDepthStencilValue{1.0f, 0};
   vk::RenderingAttachmentInfo attachmentInfo = {
       .imageView = texture_.getColorView(),
       .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
@@ -359,12 +359,12 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
   commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics,
                              *graphicsPipeline_);
 
-  commandBuffer.setViewport(
-      0, vk::Viewport(
-             0.0f, 0.0f, static_cast<float>(swapchain_->getExtent().width),
-             static_cast<float>(swapchain_->getExtent().height), 0.0f, 1.0f));
+commandBuffer.setViewport(
+      0, vk::Viewport{0.0f, 0.0f,
+              static_cast<float>(swapchain_->getExtent().width),
+              static_cast<float>(swapchain_->getExtent().height), 0.0f, 1.0f});
   commandBuffer.setScissor(
-      0, vk::Rect2D(vk::Offset2D(0, 0), swapchain_->getExtent()));
+      0, vk::Rect2D{vk::Offset2D{0, 0}, swapchain_->getExtent()});
   // Bind vertex/index buffer 1 lần (chia sẻ giữa các objects)
   scene_.model().bind(commandBuffer);
   // Loop draw từng object
@@ -572,14 +572,14 @@ void VulkanRenderer::createUniformBuffers() {
 void VulkanRenderer::createDescriptorPool() {
   // nhan 2 uniform buffer cho compute shader va 1 uniform buffer cho graphics
   // shader
-  std::array poolSize{
-      vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer,
-                             MAX_FRAMES_IN_FLIGHT * MAX_OBJECTS),
-      vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler,
-                             MAX_FRAMES_IN_FLIGHT * MAX_OBJECTS),
-      vk::DescriptorPoolSize(vk::DescriptorType::eStorageBuffer,
-                             MAX_FRAMES_IN_FLIGHT *
-                                 2)}; // compute SSBO ping-pong
+std::array poolSize{
+      vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer,
+                              MAX_FRAMES_IN_FLIGHT * MAX_OBJECTS},
+      vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler,
+                              MAX_FRAMES_IN_FLIGHT * MAX_OBJECTS},
+      vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer,
+                              MAX_FRAMES_IN_FLIGHT *
+                                  2}}; // compute SSBO ping-pong
   vk::DescriptorPoolCreateInfo poolInfo{
       .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
       .maxSets = MAX_FRAMES_IN_FLIGHT * MAX_OBJECTS,
@@ -810,7 +810,7 @@ void VulkanRenderer::recreateSwapChain() {
   window_->getFramebufferSize(width, height);
   while (width == 0 || height == 0) {
     window_->getFramebufferSize(width, height);
-#if !defined(__ANDROID__)
+#if !defined(__ANDROID__) && !defined(VULKAN_LEARN_IOS)
     glfwWaitEvents();
 #endif
   }

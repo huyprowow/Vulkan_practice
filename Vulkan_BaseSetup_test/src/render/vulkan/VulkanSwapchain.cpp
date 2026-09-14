@@ -1,5 +1,5 @@
 #include "VulkanSwapchain.hpp"
-#include "../../platform/desktop/Window.hpp"
+#include "../../platform/IWindow.hpp"
 #include "VulkanDevice.hpp"
 
 #include <cassert>

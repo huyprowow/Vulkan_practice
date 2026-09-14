@@ -325,10 +325,10 @@ void VulkanParticleSystem::createComputeUniformBuffers() {
 
 // Pool RIÊNG cho compute (không share với Renderer)
 void VulkanParticleSystem::createComputeDescriptorPool() {
-  std::array poolSize{vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer,
-                                             MAX_FRAMES_IN_FLIGHT),
-                      vk::DescriptorPoolSize(vk::DescriptorType::eStorageBuffer,
-                                             MAX_FRAMES_IN_FLIGHT * 2)};
+std::array poolSize{vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer,
+                                              MAX_FRAMES_IN_FLIGHT},
+                       vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer,
+                                              MAX_FRAMES_IN_FLIGHT * 2}};
   vk::DescriptorPoolCreateInfo poolInfo{
       .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
       .maxSets = MAX_FRAMES_IN_FLIGHT,

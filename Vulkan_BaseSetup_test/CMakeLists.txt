@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(Vulkan_Learn)
+project(Vulkan_Learn LANGUAGES C CXX)
 # specify the C++ standard
 #set(CMAKE_CXX_STANDARD 20)
 #set(CMAKE_CXX_STANDARD_REQUIRED True)   
@@ -15,12 +15,28 @@ if(ENABLE_CPP20_MODULE)
   set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 endif()
 
-find_package(glfw3 REQUIRED)
+if(NOT IOS)
+    find_package(glfw3 REQUIRED)
+    # Các dòng target_link_libraries liên quan đến glfw cho Win/Mac giữ nguyên ở đây
+else()
+    message(STATUS "build ios - skip GLFW PC!")
+    enable_language(OBJCXX)
+    set(CMAKE_OSX_SYSROOT iphoneos)
+    set(CMAKE_OSX_ARCHITECTURES arm64)
+endif()
 find_package(glm REQUIRED)
 find_package(tinygltf REQUIRED)
+# The iOS SDK ships Vulkan headers with the host SDK and the runtime as an
+# iOS framework. Pin these paths before FindVulkan searches host libraries.
+if(IOS)
+  set(Vulkan_INCLUDE_DIR "$ENV{VULKAN_SDK}/../macOS/include" CACHE PATH
+      "Vulkan headers for iOS" FORCE)
+  set(Vulkan_LIBRARY "$ENV{VULKAN_SDK}/lib/vulkan.framework/vulkan" CACHE FILEPATH
+      "Vulkan iOS framework binary" FORCE)
+endif()
 find_package(Vulkan REQUIRED)
 find_package(VulkanHpp REQUIRED)
-find_package(Ktx CONFIG REQUIRED)
+find_package(KTX CONFIG REQUIRED)
 
 if(ENABLE_DX12)
   find_package(directxtk12 CONFIG REQUIRED)
@@ -30,7 +46,8 @@ endif()
 # add_executable (glslang::validator IMPORTED)
 # find_program (GLSLANG_VALIDATOR "glslangValidator" HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
 # set_property (TARGET glslang::validator PROPERTY IMPORTED_LOCATION "${GLSLANG_VALIDATOR}")
-find_program(SLANGC_EXECUTABLE slangc HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
+find_program(SLANGC_EXECUTABLE slangc
+  HINTS $ENV{VULKAN_SDK}/bin $ENV{VULKAN_SDK}/../macOS/bin REQUIRED)
 
 
 # set up Vulkan C++ module only if enabled
@@ -133,18 +150,32 @@ function(add_slang_shader_target TARGET)
   endforeach()
 
   add_custom_target(${TARGET}_shader DEPENDS ${SHADER_OUTPUTS})
+  set(${TARGET}_SHADER_OUTPUTS "${SHADER_OUTPUTS}" PARENT_SCOPE)
 endfunction()
 
 function(add_to_build CPP_FILE)
   cmake_parse_arguments(ARG
     "" "SHADER" "LIBS;TEXTURES;MODELS" ${ARGN})
 
-  add_executable(${PROJECT_NAME} ${CPP_FILE})
+  if(IOS)
+    add_executable(${PROJECT_NAME} MACOSX_BUNDLE
+      ios/iOSApp.mm
+      src/platform/ios/IOSWindow.mm
+    )
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+      MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/ios/Info.plist"
+      MACOSX_BUNDLE_GUI_IDENTIFIER "com.huyprowow.VulkanLearn"
+      XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.huyprowow.VulkanLearn"
+      XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+      XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "13.0"
+    )
+  else()
+    add_executable(${PROJECT_NAME} ${CPP_FILE})
+  endif()
   set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 20)
   # add files to compile
   target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_sources(${PROJECT_NAME} PRIVATE
-    src/platform/desktop/Window.cpp
     src/render/vulkan/VulkanInstance.cpp
     src/render/vulkan/VulkanDevice.cpp
     src/render/vulkan/VulkanSwapchain.cpp
@@ -157,6 +188,16 @@ function(add_to_build CPP_FILE)
     src/render/vulkan/VulkanParticleSystem.cpp
     src/render/vulkan/ThreadCommandPool.cpp
   )
+
+  if(IOS)
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+      "${Vulkan_Target_SDK}/iOS/lib/vulkan.framework"
+      "-framework Metal" "-framework QuartzCore" "-framework UIKit"
+      "-framework Foundation"
+    )
+  else()
+    target_sources(${PROJECT_NAME} PRIVATE src/platform/desktop/Window.cpp)
+  endif()
 
   # Add compile definition if C++ 20 module is enabled
   if(ENABLE_CPP20_MODULE)
@@ -171,7 +212,11 @@ function(add_to_build CPP_FILE)
 
   # process arguments passing to function
   if(DEFINED ARG_LIBS)
-    target_link_libraries(${PROJECT_NAME} ${ARG_LIBS})
+    if(IOS)
+      target_link_libraries(${PROJECT_NAME} PRIVATE ${ARG_LIBS})
+    else()
+      target_link_libraries(${PROJECT_NAME} ${ARG_LIBS})
+    endif()
   endif()
 
   if(DEFINED ARG_SHADER)
@@ -179,6 +224,11 @@ function(add_to_build CPP_FILE)
     if(SHADER_SLANG_SOURCES)
       add_slang_shader_target(${PROJECT_NAME} SOURCES ${SHADER_SLANG_SOURCES})
       add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}_shader)
+      if(IOS)
+        set_source_files_properties(${${PROJECT_NAME}_SHADER_OUTPUTS}
+          PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/shaders")
+        target_sources(${PROJECT_NAME} PRIVATE ${${PROJECT_NAME}_SHADER_OUTPUTS})
+      endif()
     else()
       message(WARNING "Shader file not found: ${CMAKE_CURRENT_LIST_DIR}/shaders/${ARG_SHADER}.slang")
     endif()
@@ -187,22 +237,46 @@ function(add_to_build CPP_FILE)
   if(DEFINED ARG_MODELS)
     list(TRANSFORM ARG_MODELS PREPEND "${CMAKE_SOURCE_DIR}/assets/")
     file(COPY ${ARG_MODELS} DESTINATION ${CMAKE_BINARY_DIR}/models)
+    if(IOS)
+      foreach(ASSET IN LISTS ARG_MODELS)
+        set_source_files_properties("${ASSET}"
+          PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/models")
+        target_sources(${PROJECT_NAME} PRIVATE "${ASSET}")
+      endforeach()
+    endif()
   endif()
   if(DEFINED ARG_TEXTURES)
     list(TRANSFORM ARG_TEXTURES PREPEND "${CMAKE_SOURCE_DIR}/assets/")
     file(COPY ${ARG_TEXTURES} DESTINATION ${CMAKE_BINARY_DIR}/textures)
+    if(IOS)
+      foreach(ASSET IN LISTS ARG_TEXTURES)
+        set_source_files_properties("${ASSET}"
+          PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/textures")
+        target_sources(${PROJECT_NAME} PRIVATE "${ASSET}")
+      endforeach()
+    endif()
   endif()
 
 endfunction()
 
 
 
-add_to_build(main.cpp
-  LIBS Vulkan::cppm glfw glm::glm tinygltf::tinygltf KTX::ktx
-  SHADER shader
-  TEXTURES textures/viking_room.ktx2
-  MODELS models/viking_room.glb
-)
+if(IOS)
+  add_to_build(main.cpp
+    LIBS Vulkan::cppm glm::glm tinygltf::tinygltf KTX::ktx
+    SHADER shader
+    TEXTURES textures/viking_room.ktx2
+    MODELS models/viking_room.glb
+  )
+else()
+  # Keep the existing desktop link set unchanged.
+  add_to_build(main.cpp
+    LIBS Vulkan::cppm glfw glm::glm tinygltf::tinygltf KTX::ktx
+    SHADER shader
+    TEXTURES textures/viking_room.ktx2
+    MODELS models/viking_room.glb
+  )
+endif()
 
 # --- Documentation (Doxygen + Graphviz) ---
 option(BUILD_DOCS "Build documentation" OFF)

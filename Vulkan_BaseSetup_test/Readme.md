@@ -86,6 +86,19 @@ note:
   - Check ABI of a device/emulator:
     `adb shell getprop ro.product.cpu.abilist`
 
+#### c. ios
+require: xcode install
+
+xcode build:
+cmake -B build_xcode -G Xcode -DCMAKE_SYSTEM_NAME=iOS .
+open it by xcode
+
+  Build:
+
+  cd /Users/huyprowow/Documents/Vulkan_practice/Vulkan_BaseSetup_test
+
+  cmake --fresh --preset ios-device
+  cmake --build build_xcode_ios --config Debug
 ### 2.run
 
 #### a. desktop

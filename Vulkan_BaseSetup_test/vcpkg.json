@@ -2,7 +2,10 @@
   "dependencies": [
     "glm",
     "tinyobjloader",
-    "glfw3",
+    {
+      "name": "glfw3",
+      "platform": "!ios"
+    },
     "stb",
     "tinygltf",
     "nlohmann-json",

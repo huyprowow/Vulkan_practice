@@ -37,7 +37,7 @@ void VulkanMemory::copyBuffer(vk::raii::Buffer &srcBuffer,
                               vk::DeviceSize size) {
   vk::raii::CommandBuffer commandCopyBuffer = beginSingleTimeCommands();
   commandCopyBuffer.copyBuffer(srcBuffer, dstBuffer,
-                               vk::BufferCopy(0, 0, size));
+                               vk::BufferCopy{0, 0, size});
   endSingleTimeCommands(commandCopyBuffer);
 }
 
