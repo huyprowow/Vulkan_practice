@@ -1,6 +1,7 @@
 # Build directories
 build/
 build-vs/
+build-*/
 build_xcode_ios/
 out/
 bin/

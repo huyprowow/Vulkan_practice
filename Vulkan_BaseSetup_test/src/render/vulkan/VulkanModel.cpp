@@ -8,6 +8,19 @@
 #include <android/asset_manager.h>
 #endif
 
+namespace {
+// eShaderDeviceAddress chi hop le khi da bat feature bufferDeviceAddress,
+// eAccelerationStructureBuildInputReadOnlyKHR chi hop le khi device da bat
+// VK_KHR_acceleration_structure; ca hai chi bat khi GPU ho tro RT
+vk::BufferUsageFlags blasInputUsage(const VulkanDevice &device) {
+  if (!device.isRayTracingSupported()) {
+    return {};
+  }
+  return vk::BufferUsageFlagBits::eShaderDeviceAddress |
+         vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
+}
+} // namespace
+
 void VulkanModel::load(VulkanDevice &device, VulkanMemory &memory,
                        const std::string &modelPath
 #if defined(__ANDROID__)
@@ -85,10 +98,9 @@ void VulkanModel::createVertexBuffer() {
           vk::BufferUsageFlagBits::eTransferDst|
       // Cần eShaderDeviceAddress để getBufferAddressKHR sau này
       // Cần eAccelerationStructureBuildInputReadOnlyKHR vì BLAS đọc
-      //   vertex/index buffer làm input. Bật flag ở không gây side
-      //   effect vì feature chỉ activate khi gọi build AS.
-      vk::BufferUsageFlagBits::eShaderDeviceAddress |
-          vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR,
+      //   vertex/index buffer làm input
+      // (cả hai chỉ bật khi GPU hỗ trợ ray tracing, xem blasInputUsage)
+      blasInputUsage(*device_),
       vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer_,
       vertexBufferMemory_);
 
@@ -117,9 +129,7 @@ void VulkanModel::createIndexBuffer() {
           //   giống lý do ở vertex buffer.
           // eStorageBuffer: RT shader bind index buffer làm SSBO để
           //   lookup primitive triangle ở hit point.
-          vk::BufferUsageFlagBits::eShaderDeviceAddress |
-          vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
-          vk::BufferUsageFlagBits::eStorageBuffer,
+          blasInputUsage(*device_) | vk::BufferUsageFlagBits::eStorageBuffer,
       vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer_,
       indexBufferMemory_);
 

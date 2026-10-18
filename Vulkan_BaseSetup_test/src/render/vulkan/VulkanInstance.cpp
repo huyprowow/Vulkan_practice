@@ -30,7 +30,7 @@ void VulkanInstance::createInstance(const IWindow &window) {
   // Vulkan)
 #ifdef __APPLE__
   constexpr uint32_t vulkanApiVersion =
-      vk::ApiVersion13; // MoltenVK supports up to 1.3
+      vk::ApiVersion13; // app chi can 1.3 (MoltenVK trong SDK 1.4.341 da ho tro 1.4)
 #else
   constexpr uint32_t vulkanApiVersion =
       vk::ApiVersion14; // Native Vulkan on Windows/Linux

@@ -92,13 +92,13 @@ if have mac
 require: xcode install, connect iphone to mac
 if not have mac: 
 - install vmware -> install macos use auto unlocker to unlock VMware mac os and iso file create vm -> install xcode or install .xip from apple Developer->install xcode
-(option) ipa install to install -> install altstore -> install altstor, .ipa app
+- (option) ipa install to install -> install altstore -> install altstor, .ipa app
 
 *xcode build*:
- cd /Users/huyprowow/Documents/Vulkan_practice/Vulkan_BaseSetup_test
+  ```cd ./Vulkan_BaseSetup_test```
 
-  cmake --fresh --preset ios-device
-  cmake --build build_xcode_ios --config Debug
+  ```cmake --fresh --preset ios-device```
+  ```cmake --build build_xcode_ios --config Debug```
 
 -> open xcodeproject in built folder by xcode then build
  
@@ -117,7 +117,7 @@ run directly by android studio with emulator or copy .apk file then install in a
 go to android build folder: `android\app\build\` apk file will in: `android\app\build\outputs\apk\debug\app-debug.apk` or `android\app\build\outputs\apk\release\app-release.apk`
 
 #### b. ios
-connect iphone to machine by cable then open xcode project change target device chose iphone name and click play to build and run
+connect iphone to machine by cable then open xcode project change target device choose iphone name and click play to build and run
 
 ### 3.debug
 

@@ -3,6 +3,7 @@
 
 // #include <vulkan/vulkan_profiles.hpp>
 
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <ranges>
@@ -14,6 +15,48 @@
 // };
 // } // namespace
 
+namespace {
+// Chỉ bật khi GPU hỗ trợ. Buffer device address và descriptor indexing đã là
+// core từ Vulkan 1.2 nên không nằm trong danh sách này (feature của chúng
+// được kiểm tra trong supportsRayTracing).
+const std::vector<const char *> kRayTracingExtensions = {
+    vk::KHRAccelerationStructureExtensionName, vk::KHRRayQueryExtensionName,
+    vk::KHRDeferredHostOperationsExtensionName};
+
+bool supportsExtensions(const vk::raii::PhysicalDevice &device,
+                        const std::vector<const char *> &extensions) {
+  auto available = device.enumerateDeviceExtensionProperties();
+  return std::ranges::all_of(extensions, [&](const char *name) {
+    return std::ranges::any_of(available, [name](auto const &ext) {
+      return std::strcmp(ext.extensionName, name) == 0;
+    });
+  });
+}
+
+bool supportsRayTracing(const vk::raii::PhysicalDevice &device) {
+  // Chỉ query feature struct của RT khi device có extension tương ứng
+  if (!supportsExtensions(device, kRayTracingExtensions)) {
+    return false;
+  }
+  auto features = device.getFeatures2<
+      vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features,
+      vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
+      vk::PhysicalDeviceRayQueryFeaturesKHR>();
+  // bufferDeviceAddress (BLAS input) + descriptor indexing (bindless) chi can
+  // cho RT, raster khong dung → chi yeu cau khi bat RT
+  auto const &vk12Features = features.get<vk::PhysicalDeviceVulkan12Features>();
+  return vk12Features.bufferDeviceAddress &&
+         vk12Features.runtimeDescriptorArray &&
+         vk12Features.descriptorBindingPartiallyBound &&
+         vk12Features.descriptorBindingVariableDescriptorCount &&
+         vk12Features.descriptorBindingSampledImageUpdateAfterBind &&
+         vk12Features.shaderSampledImageArrayNonUniformIndexing &&
+         features.get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>()
+             .accelerationStructure &&
+         features.get<vk::PhysicalDeviceRayQueryFeaturesKHR>().rayQuery;
+}
+} // namespace
+
 /// Khởi tạo VulkanDevice: chọn physical device và tạo logical device
 void VulkanDevice::init(const vk::raii::Instance &instance,
                         const vk::raii::SurfaceKHR &surface) {
@@ -22,14 +65,6 @@ void VulkanDevice::init(const vk::raii::Instance &instance,
       vk::KHRSwapchainExtensionName, vk::KHRSpirv14ExtensionName,
       vk::KHRSynchronization2ExtensionName,
       vk::KHRCreateRenderpass2ExtensionName,
-#if !defined(__ANDROID__) && !defined(VULKAN_IOS)
-      // RT extensions — chỉ request trên desktop.
-      // Android/iOS phần lớn không hỗ trợ ray query → skip để
-      // device vẫn pass isDeviceSuitable
-      vk::KHRAccelerationStructureExtensionName, vk::KHRRayQueryExtensionName,
-      vk::KHRBufferDeviceAddressExtensionName,
-      vk::KHRDeferredHostOperationsExtensionName,
-#endif
 #ifdef __APPLE__
       "VK_KHR_portability_subset" // Required for MoltenVK devices
 #endif
@@ -86,7 +121,7 @@ void VulkanDevice::pickPhysicalDevice(const vk::raii::Instance &instance,
   // }
 
   // chi check ho tro vk1.3 và 1 so extension
-  const auto devIter = std::ranges::find_if(devices, [&](auto const &device) {
+  auto isDeviceSuitable = [&](auto const &device) {
     // Check if the device supports the Vulkan 1.3 API version
     bool supportsVulkan1_3 =
         device.getProperties().apiVersion >= VK_API_VERSION_1_3;
@@ -99,26 +134,19 @@ void VulkanDevice::pickPhysicalDevice(const vk::raii::Instance &instance,
         });
 
     // Check if all required device extensions are available
-    auto availableDeviceExtensions =
-        device.enumerateDeviceExtensionProperties();
-    bool supportsAllRequiredExtensions = std::ranges::all_of(
-        requiredDeviceExtension_,
-        [&availableDeviceExtensions](auto const &requiredDeviceExtension) {
-          return std::ranges::any_of(
-              availableDeviceExtensions,
-              [requiredDeviceExtension](auto const &availableDeviceExtension) {
-                return std::strcmp(availableDeviceExtension.extensionName,
-                                   requiredDeviceExtension) == 0;
-              });
-        });
+    bool supportsAllRequiredExtensions =
+        supportsExtensions(device, requiredDeviceExtension_);
 
+    // phai khop voi featureChain trong createLogicalDevice, neu khong
+    // createDevice se fail voi VK_ERROR_FEATURE_NOT_PRESENT
     auto features = device.template getFeatures2<
         vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
-        vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
-        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
-        vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
-        vk::PhysicalDeviceRayQueryFeaturesKHR>();
+        vk::PhysicalDeviceVulkan13Features,
+        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+    auto const &coreFeatures =
+        features.template get<vk::PhysicalDeviceFeatures2>().features;
     bool supportsRequiredFeatures =
+        coreFeatures.sampleRateShading && coreFeatures.samplerAnisotropy &&
         features.template get<vk::PhysicalDeviceVulkan11Features>()
             .shaderDrawParameters &&
         features.template get<vk::PhysicalDeviceVulkan13Features>()
@@ -127,31 +155,12 @@ void VulkanDevice::pickPhysicalDevice(const vk::raii::Instance &instance,
             .synchronization2 &&
         features
             .template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
-            .extendedDynamicState
-#if !defined(__ANDROID__) && !defined(VULKAN_IOS)
-        // kiểm tra RT + descriptor indexing trên desktop.
-        //  Descriptor indexing flags chuẩn bị sẵn cho bindless
-        && features.template get<vk::PhysicalDeviceVulkan12Features>()
-               .bufferDeviceAddress &&
-        features.template get<vk::PhysicalDeviceVulkan12Features>()
-            .runtimeDescriptorArray &&
-        features.template get<vk::PhysicalDeviceVulkan12Features>()
-            .descriptorBindingPartiallyBound &&
-        features.template get<vk::PhysicalDeviceVulkan12Features>()
-            .descriptorBindingVariableDescriptorCount &&
-        features.template get<vk::PhysicalDeviceVulkan12Features>()
-            .descriptorBindingSampledImageUpdateAfterBind &&
-        features.template get<vk::PhysicalDeviceVulkan12Features>()
-            .shaderSampledImageArrayNonUniformIndexing &&
-        features
-            .template get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>()
-            .accelerationStructure &&
-        features.template get<vk::PhysicalDeviceRayQueryFeaturesKHR>().rayQuery
-#endif
-        ;
+            .extendedDynamicState;
+    // bufferDeviceAddress + descriptor indexing: chi bat buoc khi co RT, xem
+    // supportsRayTracing
 
-    // also require that at least one queue family supports present on this
-    // surface
+    // chua check present o day (lambda duoi luon tra ve true), present duoc
+    // check theo tung queue family trong createLogicalDevice
     bool supportsPresent =
         std::ranges::any_of(queueFamilies, [&](auto const & /*qfp*/) {
           // we don't know index here, so check by index later
@@ -171,16 +180,34 @@ void VulkanDevice::pickPhysicalDevice(const vk::raii::Instance &instance,
 
     return supportsVulkan1_3 && supportsGraphics &&
            supportsAllRequiredExtensions && supportsRequiredFeatures;
-  });
+  };
 
-  if (devIter != devices.end()) {
-    physicalDevice_ = *devIter;
-    msaaSamples_ = getMaxUsableSampleCount();
-    std::cout << "MSAA Samples: " << static_cast<uint32_t>(msaaSamples_)
-              << std::endl;
-  } else {
+  // uu tien GPU co ray tracing, roi toi GPU roi (may co ca iGPU lan dGPU)
+  const vk::raii::PhysicalDevice *bestDevice = nullptr;
+  int bestScore = -1;
+  for (auto const &device : devices) {
+    if (!isDeviceSuitable(device)) {
+      continue;
+    }
+    int score = (supportsRayTracing(device) ? 2 : 0) +
+                (device.getProperties().deviceType ==
+                         vk::PhysicalDeviceType::eDiscreteGpu
+                     ? 1
+                     : 0);
+    if (score > bestScore) {
+      bestDevice = &device;
+      bestScore = score;
+    }
+  }
+
+  if (!bestDevice) {
     throw std::runtime_error("failed to find a suitable GPU!");
   }
+  physicalDevice_ = *bestDevice;
+  rayTracingSupported_ = supportsRayTracing(physicalDevice_);
+  msaaSamples_ = getMaxUsableSampleCount();
+  std::cout << "MSAA Samples: " << static_cast<uint32_t>(msaaSamples_)
+            << std::endl;
 }
 
 void VulkanDevice::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
@@ -190,11 +217,13 @@ void VulkanDevice::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
   // trên luồng chính chỉ với một lệnh gọi
 
   // hang doi ho tro do hoa, gan muc do uu tien
-  // find the index of the first queue family that supports graphics
+  // find the index of the first queue family that supports graphics, present
+  // and compute
   std::vector<vk::QueueFamilyProperties> queueFamilyProperties =
       physicalDevice_.getQueueFamilyProperties();
 
-  // lay index dau tien vao queueFamilyProperties ho tro do hoa va present
+  // lay index dau tien vao queueFamilyProperties ho tro do hoa, present va
+  // compute
   for (uint32_t qfpIndex = 0; qfpIndex < queueFamilyProperties.size();
        qfpIndex++) {
     if ((queueFamilyProperties[qfpIndex].queueFlags &
@@ -209,46 +238,51 @@ void VulkanDevice::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
   }
   if (queueIndex_ == ~0u) {
     throw std::runtime_error(
-        "Could not find a queue for graphics and present -> terminating");
+        "Could not find a queue for graphics, present and compute -> "
+        "terminating");
   }
 
-  // truy van tat ca chuc nang toi vk1.3 vi mac dinh chi vk1.0
+  // bat cac chuc nang toi vk1.3 vi mac dinh chi vk1.0
   vk::StructureChain<
       vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features,
       vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
-      vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
-#if !defined(__ANDROID__) && !defined(VULKAN_IOS)
-      ,
+      vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
       vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
-      vk::PhysicalDeviceRayQueryFeaturesKHR
-#endif
-      >
+      vk::PhysicalDeviceRayQueryFeaturesKHR>
       featureChain = {
           // vk::PhysicalDeviceFeatures2
           {.features = {.sampleRateShading = true, .samplerAnisotropy = true}},
           // vk::PhysicalDeviceVulkan11Features
           {.shaderDrawParameters = true},
           // Vulkan12Features - bufferDeviceAddress (BLAS input)
-          // + descriptor indexing (bindless)
-          // Field order tự do, chỉ cần là member của struct
-          {.shaderSampledImageArrayNonUniformIndexing = true,
-           .descriptorBindingSampledImageUpdateAfterBind = true,
-           .descriptorBindingPartiallyBound = true,
-           .descriptorBindingVariableDescriptorCount = true,
-           .runtimeDescriptorArray = true,
-           .bufferDeviceAddress = true},
+          // + descriptor indexing (bindless), chỉ bật khi GPU hỗ trợ RT
+          // Field phải đúng thứ tự khai báo trong struct (C++20 designated
+          // initializer), sai thứ tự thì GCC/MSVC báo lỗi
+          {.shaderSampledImageArrayNonUniformIndexing = rayTracingSupported_,
+           .descriptorBindingSampledImageUpdateAfterBind = rayTracingSupported_,
+           .descriptorBindingPartiallyBound = rayTracingSupported_,
+           .descriptorBindingVariableDescriptorCount = rayTracingSupported_,
+           .runtimeDescriptorArray = rayTracingSupported_,
+           .bufferDeviceAddress = rayTracingSupported_},
           // vk::PhysicalDeviceVulkan13Features
           {.synchronization2 = true, .dynamicRendering = true},
           // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
-          {.extendedDynamicState = true}
-#if !defined(__ANDROID__) && !defined(VULKAN_IOS)
-          ,
+          {.extendedDynamicState = true},
           // vk::PhysicalDeviceAccelerationStructureFeaturesKHR
           {.accelerationStructure = true},
           // vk::PhysicalDeviceRayQueryFeaturesKHR
-          {.rayQuery = true}
-#endif
-      };
+          {.rayQuery = true}};
+
+  std::vector<const char *> enabledExtensions = requiredDeviceExtension_;
+  if (rayTracingSupported_) {
+    enabledExtensions.insert(enabledExtensions.end(),
+                             kRayTracingExtensions.begin(),
+                             kRayTracingExtensions.end());
+  } else {
+    // feature struct cua extension khong duoc bat khong duoc nam trong pNext
+    featureChain.unlink<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>();
+    featureChain.unlink<vk::PhysicalDeviceRayQueryFeaturesKHR>();
+  }
 
   // create a VulkanDevice
   float queuePriority = 0.0f;
@@ -260,26 +294,16 @@ void VulkanDevice::createLogicalDevice(const vk::raii::SurfaceKHR &surface) {
       .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
       .queueCreateInfoCount = 1,
       .pQueueCreateInfos = &deviceQueueCreateInfo,
-      .enabledExtensionCount =
-          static_cast<uint32_t>(requiredDeviceExtension_.size()),
-      .ppEnabledExtensionNames = requiredDeviceExtension_.data()};
+      .enabledExtensionCount = static_cast<uint32_t>(enabledExtensions.size()),
+      .ppEnabledExtensionNames = enabledExtensions.data()};
 
   device_ = vk::raii::Device(physicalDevice_, deviceCreateInfo);
   graphicsQueue_ =
       vk::raii::Queue(device_, queueIndex_, 0); // hang doi lenh do hoa
 
-  // set cờ RT support theo build target.
-  // Nếu đến được đây trên desktop, mọi feature/extension RT đã enable thành
-  // công (vì isDeviceSuitable đã check ở pickPhysicalDevice). Trên Android luôn
-  // false.
-#if !defined(__ANDROID__) && !defined(VULKAN_IOS)
-  rayTracingSupported_ = true;
-  std::cout << "Ray tracing: ENABLED" << std::endl;
-#elif defined(VULKAN_IOS)
-  std::cout << "Ray tracing: disabled (iOS build)" << std::endl;
-#else
-  std::cout << "Ray tracing: disabled (Android build)" << std::endl;
-#endif
+  std::cout << "Ray tracing: "
+            << (rayTracingSupported_ ? "ENABLED" : "disabled (GPU not supported)")
+            << std::endl;
 }
 
 // tim queue family ho tro cac lenh do hoa
