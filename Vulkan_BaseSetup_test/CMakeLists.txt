@@ -5,7 +5,7 @@ project(Vulkan_Learn LANGUAGES C CXX)
 #set(CMAKE_CXX_STANDARD 20)
 #set(CMAKE_CXX_STANDARD_REQUIRED True)   
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/CMake")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/Cmake")
 
 # Add option to enable/disable C++ 20 module
 option(ENABLE_CPP20_MODULE "Enable C++ 20 module support for Vulkan" OFF)
@@ -36,7 +36,12 @@ if(IOS)
 endif()
 find_package(Vulkan REQUIRED)
 find_package(VulkanHpp REQUIRED)
-find_package(KTX CONFIG REQUIRED)
+find_package(Ktx CONFIG REQUIRED)
+
+if(NOT IOS)
+  include(ImGui)
+  target_link_libraries(imgui PUBLIC glfw Vulkan::Vulkan)
+endif()
 
 if(ENABLE_DX12)
   find_package(directxtk12 CONFIG REQUIRED)
@@ -130,17 +135,12 @@ function(add_slang_shader_target TARGET)
     get_filename_component(NAME_WE ${SRC_FILE} NAME_WE) # shader → shader, compute → compute
     set(OUT_FILE ${NAME_WE}.spv)
 
-    set(ENTRY_POINTS -entry vertMain -entry fragMain)
-    file(READ ${SRC_FILE} SHADER_CONTENT)
-    string(FIND "${SHADER_CONTENT}" "compMain" HAS_COMP)
-    if(NOT HAS_COMP EQUAL -1)
-      list(APPEND ENTRY_POINTS -entry compMain)
-    endif()
-
+    # không truyền -entry: slangc tự lấy mọi hàm có [shader("...")], nên file chỉ
+    # có compute hoặc có nhiều entry compute vẫn biên dịch được
     add_custom_command(
       OUTPUT ${SHADERS_DIR}/${OUT_FILE}
       COMMAND ${SLANGC_EXECUTABLE} ${SRC_FILE} -target spirv -profile spirv_1_4
-      -emit-spirv-directly -fvk-use-entrypoint-name ${ENTRY_POINTS} -o ${OUT_FILE}
+      -emit-spirv-directly -fvk-use-entrypoint-name -o ${OUT_FILE}
       WORKING_DIRECTORY ${SHADERS_DIR}
       DEPENDS ${SHADERS_DIR} ${SRC_FILE}
       COMMENT "Compiling ${NAME_WE}.slang"
@@ -176,6 +176,7 @@ function(add_to_build CPP_FILE)
   # add files to compile
   target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_sources(${PROJECT_NAME} PRIVATE
+    src/core/FileUtil.cpp
     src/render/vulkan/VulkanInstance.cpp
     src/render/vulkan/VulkanDevice.cpp
     src/render/vulkan/VulkanSwapchain.cpp
@@ -185,8 +186,11 @@ function(add_to_build CPP_FILE)
     src/render/vulkan/VulkanModel.cpp
     src/render/vulkan/MeshData.cpp
     src/render/vulkan/VulkanScene.cpp
-    src/render/vulkan/VulkanParticleSystem.cpp
     src/render/vulkan/ThreadCommandPool.cpp
+    src/render/vulkan/VulkanPipeline.cpp
+    src/render/vulkan/StorageImage.cpp
+    src/samples/raster_basic/RasterBasicSample.cpp
+    src/samples/raster_basic/VulkanParticleSystem.cpp
   )
 
   if(IOS)
@@ -196,7 +200,10 @@ function(add_to_build CPP_FILE)
       "-framework Foundation"
     )
   else()
-    target_sources(${PROJECT_NAME} PRIVATE src/platform/desktop/Window.cpp)
+    target_sources(${PROJECT_NAME} PRIVATE src/platform/desktop/Window.cpp
+                                           src/ui/ImGuiLayer.cpp
+                                           src/ui/SandboxUi.cpp)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE SANDBOX_IMGUI=1)
   endif()
 
   # Add compile definition if C++ 20 module is enabled
@@ -224,7 +231,7 @@ function(add_to_build CPP_FILE)
   endif()
 
   if(DEFINED ARG_SHADER)
-    file(GLOB SHADER_SLANG_SOURCES ${CMAKE_CURRENT_LIST_DIR}/shaders/*.slang)
+    file(GLOB SHADER_SLANG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_LIST_DIR}/shaders/*.slang)
     if(SHADER_SLANG_SOURCES)
       add_slang_shader_target(${PROJECT_NAME} SOURCES ${SHADER_SLANG_SOURCES})
       add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}_shader)
@@ -275,7 +282,7 @@ if(IOS)
 else()
   # Keep the existing desktop link set unchanged.
   add_to_build(main.cpp
-    LIBS Vulkan::cppm glfw glm::glm tinygltf::tinygltf KTX::ktx
+    LIBS Vulkan::cppm glfw glm::glm tinygltf::tinygltf KTX::ktx imgui::imgui
     SHADER shader
     TEXTURES textures/viking_room.ktx2
     MODELS models/viking_room.glb

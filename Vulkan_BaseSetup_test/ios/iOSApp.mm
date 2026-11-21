@@ -6,11 +6,13 @@
 #include <stdexcept>
 #include <unistd.h>
 
+#include "src/core/Time.hpp"
 #include "src/platform/ios/IOSWindow.hpp"
 #include "src/render/vulkan/VulkanDevice.hpp"
 #include "src/render/vulkan/VulkanInstance.hpp"
 #include "src/render/vulkan/VulkanRenderer.hpp"
 #include "src/render/vulkan/VulkanSwapchain.hpp"
+#include "src/samples/raster_basic/RasterBasicSample.hpp"
 
 namespace {
 class IOSVulkanApp {
@@ -24,6 +26,7 @@ public:
     device_.init(instance_.getInstance(), instance_.getSurface());
     swapchain_.init(device_.getPhysicalDevice(), device_, instance_.getSurface(), window_);
     renderer_.init(device_, swapchain_, window_);
+    renderer_.setSample(&sample_);
     initialized_ = true;
   }
 
@@ -31,6 +34,8 @@ public:
     if (!initialized_)
       return true;
     try {
+      frameTimer_.tick();
+      sample_.update(frameTimer_.deltaSeconds());
       renderer_.drawFrame();
       return true;
     } catch (const std::exception &error) {
@@ -61,7 +66,9 @@ private:
   VulkanDevice device_;
   VulkanSwapchain swapchain_;
   VulkanRenderer renderer_;
+  RasterBasicSample sample_;
   bool initialized_ = false;
+  FrameTimer frameTimer_;
 };
 } // namespace
 

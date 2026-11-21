@@ -10,6 +10,8 @@ Window::Window(uint32_t width, uint32_t height, const char *title) {
   }
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // not using OpenGL with GLFW
   glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);    // resize window? -> GLFW_TRUE
+  // nhân kích thước cửa sổ theo tỉ lệ màn hình (màn 4K scale 2: 800x600 thành 1600x1200)
+  glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
   window_ = glfwCreateWindow(static_cast<int>(width), static_cast<int>(height),
                              title, nullptr, nullptr);
   if (!window_) {

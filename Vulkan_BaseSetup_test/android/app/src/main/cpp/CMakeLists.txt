@@ -16,7 +16,7 @@ find_program(SLANGC_EXECUTABLE slangc HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
 set_property(TARGET slangc::slangc PROPERTY IMPORTED_LOCATION "${SLANGC_EXECUTABLE}")
 
 # Shader build (compile .slang -> .spv)
-# Output matches VulkanRenderer.cpp:
+# Output matches RasterBasicSample.cpp:
 #   shaders/shader.spv
 #   shaders/compute.spv
 set(SHADER_SOURCE_DIR "${PROJ_ROOT}/shaders")
@@ -33,13 +33,8 @@ foreach(SRC_FILE ${SHADER_SLANG_SOURCES})
     get_filename_component(NAME_WE "${SRC_FILE}" NAME_WE)
     set(OUT_FILE "${SHADER_OUTPUT_DIR}/${NAME_WE}.spv")
 
-    # Heuristic: compute/comp shaders use compMain, others use vertMain/fragMain
-    set(ENTRY_POINTS -entry vertMain -entry fragMain)
-    string(TOLOWER "${NAME_WE}" NAME_WE_LOWER)
-    if(NAME_WE_LOWER MATCHES "comp|compute")
-        set(ENTRY_POINTS -entry compMain)
-    endif()
-
+    # No -entry: slangc picks every function marked [shader("...")],
+    # same rule as the desktop CMakeLists.txt.
     add_custom_command(
         OUTPUT "${OUT_FILE}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${SHADER_OUTPUT_DIR}"
@@ -47,7 +42,6 @@ foreach(SRC_FILE ${SHADER_SLANG_SOURCES})
         "${SRC_FILE}"
         -target spirv -profile spirv_1_4
         -emit-spirv-directly -fvk-use-entrypoint-name
-        ${ENTRY_POINTS}
         -o "${OUT_FILE}"
         DEPENDS "${SRC_FILE}"
         COMMENT "Compiling ${NAME_WE}.slang -> ${NAME_WE}.spv"
@@ -73,6 +67,7 @@ add_library(Vulkan_Learn_Android SHARED
 
     "${PROJ_ROOT}/src/platform/android/AndroidWindow.cpp"
 
+    "${PROJ_ROOT}/src/core/FileUtil.cpp"
     "${PROJ_ROOT}/src/render/vulkan/VulkanInstance.cpp"
     "${PROJ_ROOT}/src/render/vulkan/VulkanDevice.cpp"
     "${PROJ_ROOT}/src/render/vulkan/VulkanSwapchain.cpp"
@@ -81,9 +76,12 @@ add_library(Vulkan_Learn_Android SHARED
     "${PROJ_ROOT}/src/render/vulkan/VulkanModel.cpp"
     "${PROJ_ROOT}/src/render/vulkan/MeshData.cpp"
     "${PROJ_ROOT}/src/render/vulkan/VulkanScene.cpp"
-    "${PROJ_ROOT}/src/render/vulkan/VulkanParticleSystem.cpp"
     "${PROJ_ROOT}/src/render/vulkan/VulkanMemory.cpp"
     "${PROJ_ROOT}/src/render/vulkan/ThreadCommandPool.cpp"
+    "${PROJ_ROOT}/src/render/vulkan/VulkanPipeline.cpp"
+    "${PROJ_ROOT}/src/render/vulkan/StorageImage.cpp"
+    "${PROJ_ROOT}/src/samples/raster_basic/RasterBasicSample.cpp"
+    "${PROJ_ROOT}/src/samples/raster_basic/VulkanParticleSystem.cpp"
 )
 target_link_options(Vulkan_Learn_Android PRIVATE
     "-u" "Java_com_google_androidgamesdk_GameActivity_initializeNativeCode"

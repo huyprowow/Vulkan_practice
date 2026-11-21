@@ -1,8 +1,8 @@
 #pragma once
 #include "../../core/Types.hpp"
-#include "ThreadCommandPool.hpp"
-#include "VulkanDevice.hpp"
-#include "VulkanMemory.hpp"
+#include "../../render/vulkan/ThreadCommandPool.hpp"
+#include "../../render/vulkan/VulkanDevice.hpp"
+#include "../../render/vulkan/VulkanMemory.hpp"
 
 #include <atomic>
 #include <condition_variable>
@@ -12,7 +12,7 @@
 #include <vector>
 #include <vulkan/vulkan_raii.hpp>
 
-///  quản lý compute shader + particle rendering (Ch.11 Khronos tutorial).
+///  quản lý compute shader + particle rendering 
 class VulkanParticleSystem {
 public:
   /// Khởi tạo toàn bộ particle system
@@ -22,26 +22,24 @@ public:
   /// @param colorFormat Format swapchain image (cho dynamic rendering)
   /// @param depthFormat Format depth attachment
   /// @param msaaSamples Số sample MSAA (cùng với main graphics pipeline)
-  /// @param computeShaderSpv Bytes SPIR-V của compute.spv (Renderer load)
+  /// @param computeShaderSpv Bytes SPIR-V của compute.spv (raster_basic load)
   void init(VulkanDevice &device, VulkanMemory &memory,
             vk::raii::CommandPool &commandPool, vk::Format colorFormat,
             vk::Format depthFormat, vk::SampleCountFlagBits msaaSamples,
             const std::vector<char> &computeShaderSpv);
-  void updateComputeUniformBuffer(uint32_t currentFrame);
+  void updateComputeUniformBuffer(uint32_t currentFrame, float dtSeconds);
   void recordComputeCommandBuffer(uint32_t frameIndex);//single thread
   /// Record particle draw vào primary command buffer của frame
-  /// (Renderer gọi sau khi vẽ model, trong cùng beginRendering scope)
+  /// (raster_basic gọi sau khi vẽ model, trong cùng beginRendering scope)
   void recordDraw(vk::raii::CommandBuffer &cmdBuf, uint32_t frameIndex);
 
-  /// Truy cập sync objects và compute command buffer (Renderer dùng để submit)
+  /// Truy cập sync objects và compute command buffer (raster_basic dùng để submit)
   const vk::raii::CommandBuffer &
   computeCommandBuffer(uint32_t frameIndex) const;
   const vk::raii::Semaphore &
   computeFinishedSemaphore(uint32_t frameIndex) const;
   const vk::raii::Fence &computeInFlightFence(uint32_t frameIndex) const;
 
-  /// Reset compute sync objects (gọi khi recreateSwapChain)
-  void resetSwapChainResources();
 
   /// Cleanup tất cả resource khi shutdown
   void cleanup();
@@ -53,7 +51,7 @@ public:
 
   /// dispatch compute multithreaded — replace recordComputeCommandBuffer().
   /// kick toan bo worker thread cung luc, doi tat ca xong, tra ve cmd buffers.
-  /// @return vector vk::CommandBuffer da record de Renderer submit
+  /// @return vector vk::CommandBuffer da record de raster_basic submit
   std::vector<vk::CommandBuffer> dispatchMultithreaded(uint32_t frameIndex);
 
 private:
@@ -70,7 +68,7 @@ private:
   vk::raii::PipelineLayout particlePipelineLayout_{nullptr};
   vk::raii::Pipeline particlePipeline_{nullptr};
 
-  // Descriptor pool RIÊNG (không share với Renderer): UBO + 2 SSBO ping-pong
+  // Descriptor pool RIÊNG (không share với raster_basic): UBO + 2 SSBO ping-pong
   vk::raii::DescriptorPool descriptorPool_{nullptr};
   std::vector<vk::raii::DescriptorSet> computeDescriptorSets_;
 
@@ -88,8 +86,6 @@ private:
   // Compute sync
   std::vector<vk::raii::Fence> computeInFlightFences_;
   std::vector<vk::raii::Semaphore> computeFinishedSemaphores_;
-
-  float lastFrameTime_ = 0.0f;
 
   /// range particle thread X xu li
   struct ParticleGroup {
@@ -129,9 +125,6 @@ private:
 
   // frame hien tai (atomic vi worker doc, main set)
   std::atomic<uint32_t> currentFrameIndex_{0};
-
-  [[nodiscard]] vk::raii::ShaderModule
-  createShaderModule(const std::vector<char> &code) const;
 
   void createComputeDescriptorSetLayout();
   void createShaderStorageBuffers();

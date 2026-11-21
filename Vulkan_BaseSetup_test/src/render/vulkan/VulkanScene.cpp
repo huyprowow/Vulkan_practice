@@ -38,10 +38,11 @@ void VulkanScene::init(VulkanDevice &device, VulkanMemory &memory,
   gameObjects_[2].scale = {0.75f, 0.75f, 0.75f};
 }
 
-void VulkanScene::update(float /*dtSeconds*/) {
+void VulkanScene::update(float dtSeconds) {
+  constexpr float ROTATION_SPEED = 0.5f; // rad/giây
   // Apply continuous rotation to the object
   for (auto &obj : gameObjects_) {
-    obj.rotation.y += 0.001f;
+    obj.rotation.y += ROTATION_SPEED * dtSeconds;
   }
 }
 

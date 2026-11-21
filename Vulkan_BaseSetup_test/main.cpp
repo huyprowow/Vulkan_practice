@@ -35,6 +35,7 @@
 #include <GLFW/glfw3.h>
 
 #include "src/core/IRender.hpp"
+#include "src/core/Time.hpp"
 #include "src/core/Types.hpp"
 #include "src/platform/desktop/Window.hpp"
 
@@ -42,6 +43,10 @@
 #include "src/render/vulkan/VulkanInstance.hpp"
 #include "src/render/vulkan/VulkanRenderer.hpp"
 #include "src/render/vulkan/VulkanSwapchain.hpp"
+#include "src/samples/raster_basic/RasterBasicSample.hpp"
+#include "src/samples/Samples.hpp"
+#include "src/ui/ImGuiLayer.hpp"
+#include "src/ui/SandboxUi.hpp"
 
 enum class Backend { Vulkan, DX12, WebGPU };
 
@@ -49,7 +54,12 @@ class Application {
 public:
   void run() {
     initGraphics();
-    mainLoop();
+    try {
+      mainLoop();
+    } catch (...) {
+      cleanup(); // dừng thread particle, chờ GPU xong rồi mới cho lỗi đi tiếp
+      throw;
+    }
     cleanup();
   }
 
@@ -58,7 +68,13 @@ private:
   VulkanInstance vulkanInstance_;
   VulkanDevice device_;
   VulkanSwapchain swapchain_;
+  std::unique_ptr<ISample> sample_;
   std::unique_ptr<IRenderer> renderer_;
+  VulkanRenderer *vkRenderer_ = nullptr; ///< renderer_ ở dạng Vulkan, để gọi setSample
+  ImGuiLayer imgui_;
+  FrameTimer frameTimer_;
+  int sampleIndex_ = 0;     ///< vị trí trong SAMPLES
+  int nextSampleIndex_ = 0; ///< chọn trong menu, đổi sau khi dựng xong UI
 
   Backend chooseBackend() {
     // read config from any where, now hard code vk
@@ -75,8 +91,15 @@ private:
       device_.init(vulkanInstance_.getInstance(), vulkanInstance_.getSurface());
       swapchain_.init(device_.getPhysicalDevice(), device_,
                       vulkanInstance_.getSurface(), window_);
+      sample_ = SAMPLES[sampleIndex_].create();
       auto vkRenderer = std::make_unique<VulkanRenderer>(); // vk backend
       vkRenderer->init(device_, swapchain_, window_);
+      vkRenderer->setSample(sample_.get());
+      imgui_.init(window_, vulkanInstance_.getInstance(), device_, swapchain_);
+      vkRenderer->setOverlay([this](const SampleFrame &frame) {
+        imgui_.record(frame.cmd, frame.swapchainView, frame.extent);
+      });
+      vkRenderer_ = vkRenderer.get();
       renderer_ = std::move(vkRenderer);
       break;
     }
@@ -95,14 +118,33 @@ private:
         window_.clearResized();
         renderer_->recreateSwapChain();
       }
-
+     
+      frameTimer_.tick();
+      imgui_.beginFrame();
+      nextSampleIndex_ = drawSandboxUi(sampleIndex_, *sample_);
+      imgui_.endFrame();
+      switchSampleIfRequested();
+      sample_->update(frameTimer_.deltaSeconds());
       renderer_->drawFrame();
     }
 
     device_.getDevice().waitIdle();
   }
 
+
+  void switchSampleIfRequested() {
+    if (nextSampleIndex_ == sampleIndex_) {
+      return;
+    }
+    auto next = SAMPLES[nextSampleIndex_].create();
+    vkRenderer_->setSample(next.get()); // shutdown sample cũ trước khi hủy nó
+    sample_ = std::move(next);
+    sampleIndex_ = nextSampleIndex_;
+  }
+
   void cleanup() {
+    device_.getDevice().waitIdle(); // GPU xong frame cuối rồi mới hủy tài nguyên ImGui
+    imgui_.shutdown();
     renderer_->cleanup();
     swapchain_.cleanup();
   }

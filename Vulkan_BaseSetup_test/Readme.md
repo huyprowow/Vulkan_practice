@@ -19,7 +19,9 @@ note:
   `vcpkg install`
 - (option) remove build file if build
 
-note: using terminal "x64 Native Tools Command Prompt for VS 2022" window if use msvc or build sln, if use llvm/clang/gcc add it to path/enviroment
+- note:  
+  - using terminal "x64 Native Tools Command Prompt for VS 2022" window if use msvc or build sln, if use llvm/clang/gcc add it to path/enviroment  
+  - imgui to change param use fetch and build from source instead of install with vcpkg because vcpkg auto install another version vk -> hard to control
 
 - create cmake ninja build
   - normaly:  

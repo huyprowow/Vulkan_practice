@@ -1,4 +1,6 @@
 #include "VulkanParticleSystem.hpp"
+#include "../../render/vulkan/VulkanPipeline.hpp"
+
 #include <array>
 #include <chrono>
 #include <cstring>
@@ -28,15 +30,6 @@ void VulkanParticleSystem::init(VulkanDevice &device, VulkanMemory &memory,
   createComputeSyncObjects();
 }
 
-vk::raii::ShaderModule
-VulkanParticleSystem::createShaderModule(const std::vector<char> &code) const {
-  vk::ShaderModuleCreateInfo createInfo{
-      .codeSize = code.size() * sizeof(char),
-      .pCode = reinterpret_cast<const uint32_t *>(code.data())};
-  vk::raii::ShaderModule shaderModule{device_->getDevice(), createInfo};
-  return shaderModule;
-}
-
 void VulkanParticleSystem::recordComputeCommandBuffer(uint32_t frameIndex) {
   /// ghi lenh compute moi fframe , dispatch (PARTICLE_COUNT /
   /// INVOCATIONS_SIZE) work groups x size 1 work group y, 1 work group z
@@ -58,16 +51,11 @@ void VulkanParticleSystem::recordComputeCommandBuffer(uint32_t frameIndex) {
   });
 }
 
-void VulkanParticleSystem::updateComputeUniformBuffer(uint32_t currentFrame) {
+void VulkanParticleSystem::updateComputeUniformBuffer(uint32_t currentFrame, float dtSeconds) {
   /// cap nhap UBO cho compute shader moi khung dua tren tg delta time
-  static auto startTime = std::chrono::high_resolution_clock::now();
-  auto currentTime = std::chrono::high_resolution_clock::now();
-  float time =
-      std::chrono::duration<float, std::milli>(currentTime - startTime).count();
 
   ComputeUBO ubo{};
-  ubo.deltaTime = (time - lastFrameTime_) * 2.0f;
-  lastFrameTime_ = time;
+  ubo.deltaTime = dtSeconds;
 
   std::memcpy(computeUniformBuffersMapped_[currentFrame], &ubo, sizeof(ubo));
 }
@@ -80,7 +68,7 @@ void VulkanParticleSystem::recordDraw(vk::raii::CommandBuffer &cmdBuf,
   cmdBuf.draw(PARTICLE_COUNT, 1, 0, 0);
 }
 
-// 🔴 NEW — accessors cho Renderer truy cập từ ngoài
+// accessors cho raster_basic truy cập từ ngoài
 const vk::raii::CommandBuffer &
 VulkanParticleSystem::computeCommandBuffer(uint32_t frameIndex) const {
   return computeCommandBuffers_[frameIndex];
@@ -94,12 +82,6 @@ VulkanParticleSystem::computeFinishedSemaphore(uint32_t frameIndex) const {
 const vk::raii::Fence &
 VulkanParticleSystem::computeInFlightFence(uint32_t frameIndex) const {
   return computeInFlightFences_[frameIndex];
-}
-
-void VulkanParticleSystem::resetSwapChainResources() {
-  computeCommandBuffers_.clear();
-  computeFinishedSemaphores_.clear();
-  computeInFlightFences_.clear();
 }
 
 void VulkanParticleSystem::cleanup() {
@@ -148,11 +130,8 @@ void VulkanParticleSystem::createComputeDescriptorSetLayout() {
 
 /// tao pipeline cho compute shader
 void VulkanParticleSystem::createComputePipeline(const std::vector<char> &spv) {
-  vk::raii::ShaderModule shaderModule = createShaderModule(spv);
-  vk::PipelineShaderStageCreateInfo stageInfo{
-      .stage = vk::ShaderStageFlagBits::eCompute,
-      .module = shaderModule,
-      .pName = "compMain"};
+  vk::raii::ShaderModule shaderModule =
+      createShaderModule(device_->getDevice(), spv);
   // push constant range cho startIndex + count (multithreading dispatch)
   vk::PushConstantRange pushConstantRange{.stageFlags =
                                               vk::ShaderStageFlagBits::eCompute,
@@ -165,17 +144,17 @@ void VulkanParticleSystem::createComputePipeline(const std::vector<char> &spv) {
       .pPushConstantRanges = &pushConstantRange};
   computePipelineLayout_ =
       vk::raii::PipelineLayout(device_->getDevice(), layoutInfo);
-  vk::ComputePipelineCreateInfo pipelineInfo{.stage = stageInfo,
-                                             .layout = computePipelineLayout_};
-  computePipeline_ =
-      vk::raii::Pipeline(device_->getDevice(), nullptr, pipelineInfo);
+  // :: vì hàm member này trùng tên, che mất helper toàn cục
+  computePipeline_ = ::createComputePipeline(
+      device_->getDevice(), shaderModule, "compMain", computePipelineLayout_);
 }
 
 /// pipeline ve particle
 void VulkanParticleSystem::createParticleGraphicsPipeline(
     const std::vector<char> &spv, vk::Format colorFormat,
     vk::Format depthFormat, vk::SampleCountFlagBits msaaSamples) {
-  vk::raii::ShaderModule shaderModule = createShaderModule(spv);
+  vk::raii::ShaderModule shaderModule =
+      createShaderModule(device_->getDevice(), spv);
   vk::PipelineShaderStageCreateInfo vertStage{
       .stage = vk::ShaderStageFlagBits::eVertex,
       .module = shaderModule,
@@ -270,7 +249,7 @@ void VulkanParticleSystem::createShaderStorageBuffers() {
     float x = r * cosf(theta) * HEIGHT / WIDTH;
     float y = r * sinf(theta);
     particle.position = glm::vec2(x, y);
-    particle.velocity = glm::normalize(glm::vec2(x, y)) * 0.00025f;
+    particle.velocity = glm::normalize(glm::vec2(x, y)) * 0.5f; // NDC moi giay
     particle.color = glm::vec4(rndDist(rndEngine), rndDist(rndEngine),
                                rndDist(rndEngine), 1.0f);
   }
@@ -323,7 +302,7 @@ void VulkanParticleSystem::createComputeUniformBuffers() {
   }
 }
 
-// Pool RIÊNG cho compute (không share với Renderer)
+// Pool RIÊNG cho compute (không share với raster_basic)
 void VulkanParticleSystem::createComputeDescriptorPool() {
 std::array poolSize{vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer,
                                               MAX_FRAMES_IN_FLIGHT},
@@ -535,7 +514,7 @@ void VulkanParticleSystem::waitForThreadsToComplete() {
     std::cerr << "Worker thread timeout!\n";
   }
 }
-/// orchestrator: kich worker → doi xong → tra cmd buffer cho Renderer submit
+/// orchestrator: kich worker → doi xong → tra cmd buffer cho raster_basic submit
 std::vector<vk::CommandBuffer>
 VulkanParticleSystem::dispatchMultithreaded(uint32_t frameIndex) {
   // truyen frame index cho worker (atomic)

@@ -3,11 +3,13 @@
 #include <memory>
 #include <stdexcept>
 // Your shared engine code
+#include "src/core/Time.hpp"
 #include "src/platform/android/AndroidWindow.hpp"
 #include "src/render/vulkan/VulkanDevice.hpp"
 #include "src/render/vulkan/VulkanInstance.hpp"
 #include "src/render/vulkan/VulkanRenderer.hpp"
 #include "src/render/vulkan/VulkanSwapchain.hpp"
+#include "src/samples/raster_basic/RasterBasicSample.hpp"
 
 // Logging
 #define LOGI(...)                                                              \
@@ -26,6 +28,8 @@ struct AndroidVulkanApp {
   VulkanDevice device{};
   VulkanSwapchain swapchain{};
   VulkanRenderer renderer{};
+  FrameTimer frameTimer{};
+  RasterBasicSample sample{};
 
   /// initialize Vulkan objects if window is available
   void initIfPossible() {
@@ -40,6 +44,7 @@ struct AndroidVulkanApp {
       swapchain.init(device.getPhysicalDevice(), device, instance.getSurface(),
                      window);
       renderer.init(device, swapchain, window, app->activity->assetManager);
+      renderer.setSample(&sample);
       initialized = true;
       LOGI("Vulkan initialized");
     } catch (const std::exception &e) {
@@ -67,6 +72,9 @@ struct AndroidVulkanApp {
   void draw() {
     if (!initialized)
       return;
+    
+    frameTimer.tick();
+    sample.update(frameTimer.deltaSeconds());
     renderer.drawFrame();
   }
 };

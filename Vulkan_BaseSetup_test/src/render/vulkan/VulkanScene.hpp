@@ -28,10 +28,10 @@ public:
   );
 
   /// Animation per-frame. Hiện tại: xoay quanh Y (giữ logic Ch.16).
-  /// dtSeconds dùng cho E2 sau này khi có Camera + delta time thật.
+  /// dtSeconds: delta time thật của frame, tính bằng giây.
   void update(float dtSeconds);
 
-  /// Truy cập cho VulkanRenderer.
+  /// Truy cập cho raster_basic.
   std::vector<GameObject> &gameObjects() { return gameObjects_; }
   const std::vector<GameObject> &gameObjects() const { return gameObjects_; }
 

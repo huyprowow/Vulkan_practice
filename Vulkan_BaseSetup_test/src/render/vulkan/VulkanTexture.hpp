@@ -52,7 +52,7 @@ public:
   vk::Format getDepthFormat() const { return depthFormat_; }
   uint32_t getMipLevels() const { return mipLevels_; }
 
-  // Static helpers — Renderer cũng có thể gọi mà không cần init() trước
+  // Static helpers — raster_basic cũng có thể gọi mà không cần init() trước
   static vk::Format
   findSupportedFormat(VulkanDevice &device,
                       const std::vector<vk::Format> &candidates,

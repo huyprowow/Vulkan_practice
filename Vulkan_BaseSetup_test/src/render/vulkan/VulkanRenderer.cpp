@@ -1,5 +1,7 @@
 #include "VulkanRenderer.hpp"
+#include "../../core/FileUtil.hpp"
 #include "../../core/Types.hpp"
+#include "VulkanBarrier.hpp"
 #include "VulkanSwapchain.hpp"
 
 #include <ktx.h>
@@ -18,8 +20,7 @@
 #include <android/asset_manager_jni.h>
 #endif
 
-/// Khởi tạo toàn bộ renderer: pipeline, command buffers, textures, buffers,
-/// (android: assetManager) sync objects
+/// Khởi tạo renderer: command pool, command buffers, sync objects
 void VulkanRenderer::init(VulkanDevice &device, VulkanSwapchain &swapchain,
                           IWindow &window,
 #if defined(__ANDROID__)
@@ -38,242 +39,35 @@ void VulkanRenderer::init(VulkanDevice &device, VulkanSwapchain &swapchain,
 
   surface_ = &swapchain_->getSurface();
 
-  createDescriptorSetLayout(); // layout descriptor de bind cac uniform vao
-  // pipeline
-  createGraphicsPipeline(); // tao pipeline de render
   createCommandPool();      // tao command pool luu cac command buffer
-  texture_.init(*device_, *memory_, *swapchain_, TEXTURE_PATH
-#if defined(__ANDROID__)
-                ,
-                assetManager_
-#endif
-  );
-
-  scene_.init(*device_, *memory_, MODEL_PATH
-#if defined(__ANDROID__)
-              ,
-              assetManager_
-#endif
-  );
-
-  createUniformBuffers(); // uniform cho mỗi gameObject
-  createDescriptorPool(); // tao descriptor pool luu cac descriptor set (1:n -
-  // pool:set)
-  createDescriptorSets(); // 1:1 - descriptor set: buffer resoure
   createCommandBuffers(); // tao command buffer luu cac command
 
   createSyncObjects(); // dong bo ( semaphore cho swapchain (chan gpu tranh
                        // xung dot- xac dinh thu tu thao tac), fence cho viec
                        // render chi 1 khung hinh tai 1 thoi diem giu gpu cpu
                        // dong bo)
-
-  // init particle system
-  auto computeSpv = readFile("shaders/compute.spv"
-#if defined(__ANDROID__)
-                             ,
-                             assetManager_
-#endif
-  );
-
-  particleSystem_.init(*device_, *memory_, commandPool_,
-                       swapchain_->getImageFormat(), texture_.getDepthFormat(),
-                       device_->msaaSamples_, computeSpv);
-
-  // khoi tao worker threads cho particleSystem.
-  // PARTICLE_COUNT=8192 chia het cho 2/4/8 → chon 4 thread (2048
-  // particle/thread). hardware_concurrency()/2 de khong chiem het core
-  // (con dung graphics + main).
-  uint32_t threadCount =
-      std::min<uint32_t>(MAX_COMPUTE_THREADS,
-                         std::max(1u, std::thread::hardware_concurrency() / 2));
-  particleSystem_.initThreads(threadCount, queueSubmitMutex_);
 }
 
-void VulkanRenderer::createDescriptorSetLayout() {
-std::array bindings = {
-      vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eUniformBuffer, 1,
-                                      vk::ShaderStageFlagBits::eVertex, nullptr},
-      vk::DescriptorSetLayoutBinding{
-          1, vk::DescriptorType::eCombinedImageSampler, 1,
-          vk::ShaderStageFlagBits::eFragment, nullptr}};
-
-  vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = bindings.size(),
-                                               .pBindings = bindings.data()};
-  descriptorSetLayout_ =
-      vk::raii::DescriptorSetLayout(device_->getDevice(), layoutInfo);
-}
-
-/// Tạo graphics pipeline: shader stages, fixed-function state, dynamic
-/// rendering
-void VulkanRenderer::createGraphicsPipeline() {
-  // shader stage: shader code
-  vk::raii::ShaderModule shaderModule =
-      createShaderModule(readFile("shaders/shader.spv"
-#if defined(__ANDROID__)
-                                  ,
-                                  assetManager_
-#endif
-                                  ));
-  vk::PipelineShaderStageCreateInfo vertShaderStageInfo{
-      .stage = vk::ShaderStageFlagBits::eVertex,
-      .module = shaderModule,
-      .pName = "vertMain"};
-  vk::PipelineShaderStageCreateInfo fragShaderStageInfo{
-      .stage = vk::ShaderStageFlagBits::eFragment,
-      .module = shaderModule,
-      .pName = "fragMain"};
-
-  vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo,
-                                                      fragShaderStageInfo};
-  // Fixed-function state: xac dinh giai doan co dinh (input assembly,
-  // rasterizer, viewport and color blending)
-  // bind dl vertex
-  auto bindingDescription = Vertex::getBindingDescription();
-  auto attributeDescriptions = Vertex::getAttributeDescriptions();
-  vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
-      .vertexBindingDescriptionCount = 1,
-      .pVertexBindingDescriptions = &bindingDescription,
-      .vertexAttributeDescriptionCount = attributeDescriptions.size(),
-      .pVertexAttributeDescriptions = attributeDescriptions.data()};
-
-  vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
-      .topology = vk::PrimitiveTopology::eTriangleList};
-  vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1,
-                                                    .scissorCount = 1};
-
-  vk::PipelineRasterizationStateCreateInfo rasterizer{
-      .depthClampEnable = vk::False,
-      .rasterizerDiscardEnable = vk::False,
-      .polygonMode = vk::PolygonMode::eFill,
-      .cullMode = vk::CullModeFlagBits::eBack,
-      .frontFace = vk::FrontFace::eCounterClockwise,
-      .depthBiasEnable = vk::False,
-      .depthBiasSlopeFactor = 1.0f,
-      .lineWidth = 1.0f};
-
-  vk::PipelineMultisampleStateCreateInfo multisampling{
-      .rasterizationSamples = device_->msaaSamples_,
-      .sampleShadingEnable = vk::True,
-      .minSampleShading = 0.2f};
-
-  vk::PipelineColorBlendAttachmentState colorBlendAttachment{
-      .blendEnable = vk::False,
-      .colorWriteMask =
-          vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-          vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
-
-  vk::PipelineDepthStencilStateCreateInfo depthStencil{
-      .depthTestEnable = vk::True,
-      .depthWriteEnable = vk::True,
-      .depthCompareOp = vk::CompareOp::eLess,
-      .depthBoundsTestEnable = vk::False,
-      .stencilTestEnable = vk::False};
-  vk::PipelineColorBlendStateCreateInfo colorBlending{
-      .logicOpEnable = vk::False,
-      .logicOp = vk::LogicOp::eCopy,
-      .attachmentCount = 1,
-      .pAttachments = &colorBlendAttachment};
-
-  std::vector dynamicStates = {vk::DynamicState::eViewport,
-                               vk::DynamicState::eScissor};
-  vk::PipelineDynamicStateCreateInfo dynamicState{
-      .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
-      .pDynamicStates = dynamicStates.data()};
-
-  vk::PipelineLayoutCreateInfo pipelineLayoutInfo{.setLayoutCount = 1,
-                                                  .pSetLayouts =
-                                                      &*descriptorSetLayout_,
-                                                  .pushConstantRangeCount = 0};
-
-  // pipeline layout: uniform, push shader nhan co the cap nhap luc ve
-  pipelineLayout_ =
-      vk::raii::PipelineLayout(device_->getDevice(), pipelineLayoutInfo);
-
-  // render pass
-  // dynamic render: dinh dang cac tep dinh kem sd khi render
-  vk::Format depthFormat = texture_.findDepthFormat(*device_);
-
-  vk::Format colorFormat = swapchain_->getImageFormat();
-  vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{
-      .colorAttachmentCount = 1,
-      .pColorAttachmentFormats = &colorFormat,
-      .depthAttachmentFormat = depthFormat};
-  vk::GraphicsPipelineCreateInfo pipelineInfo{
-      .pNext = &pipelineRenderingCreateInfo,
-      .stageCount = 2,
-      .pStages = shaderStages,
-      .pVertexInputState = &vertexInputInfo,
-      .pInputAssemblyState = &inputAssembly,
-      .pViewportState = &viewportState,
-      .pRasterizationState = &rasterizer,
-      .pMultisampleState = &multisampling,
-      .pDepthStencilState = &depthStencil,
-      .pColorBlendState = &colorBlending,
-      .pDynamicState = &dynamicState,
-      .layout = pipelineLayout_,
-      .renderPass = nullptr // dat null de dung dynamic render thay cho render
-                            // pass truyen thong
-  };
-  vk::StructureChain<vk::GraphicsPipelineCreateInfo,
-                     vk::PipelineRenderingCreateInfo>
-      pipelineCreateInfoChain = {pipelineInfo, pipelineRenderingCreateInfo};
-
-  graphicsPipeline_ = vk::raii::Pipeline(
-      device_->getDevice(), nullptr,
-      pipelineCreateInfoChain
-          .get<vk::GraphicsPipelineCreateInfo>()); // tham so thu 2 la
-                                                   // VK_NULL_HANDLE (dung de)
-}
-
-vk::raii::ShaderModule
-VulkanRenderer::createShaderModule(const std::vector<char> &code) const {
-  vk::ShaderModuleCreateInfo createInfo{
-      .codeSize = code.size() * sizeof(char),
-      .pCode = reinterpret_cast<const uint32_t *>(code.data())};
-  vk::raii::ShaderModule shaderModule{device_->getDevice(), createInfo};
-  return shaderModule;
-}
-
-/// Nếu Android và có assetManager → dùng AAssetManager_open để đọc file trong
-/// APK. Nếu không → dùng filesystem path.(fallback)
-/// trong desktop load tu file system, trong android load tu resource cua APK
-std::vector<char> VulkanRenderer::readFile(const std::string &filename
-#if defined(__ANDROID__)
-                                           ,
-                                           AAssetManager *assetManager
-#endif
-
-) {
-
-#if defined(__ANDROID__)
-  if (assetManager) {
-    AAsset *asset =
-        AAssetManager_open(assetManager, filename.c_str(), AASSET_MODE_BUFFER);
-    if (!asset) {
-      throw std::runtime_error("failed to open asset: " + filename);
-    }
-    const off_t length = AAsset_getLength(asset);
-    std::vector<char> buffer(static_cast<size_t>(length));
-    const int64_t readBytes = AAsset_read(asset, buffer.data(), length);
-    AAsset_close(asset);
-    if (readBytes != length) {
-      throw std::runtime_error("failed to read full asset: " + filename);
-    }
-    return buffer;
+/// doi sample
+void VulkanRenderer::setSample(ISample *sample) {
+  if (sample_) {
+    device_->getDevice().waitIdle(); // sample cũ có thể còn việc đang chạy trên GPU
+    sample_->shutdown();
   }
+  sample_ = sample;
+  if (sample_) {
+    sample_->init(SampleContext{.device = *device_,
+                                .memory = *memory_,
+                                .swapchain = *swapchain_,
+                                .commandPool = commandPool_,
+                                .queueSubmitMutex = queueSubmitMutex_,
+#if defined(__ANDROID__)
+                             .assetManager = assetManager_,
 #endif
-  // Desktop (or Android fallback) filesystem path
-  std::ifstream file(filename, std::ios::ate | std::ios::binary);
-
-  if (!file.is_open()) {
-    throw std::runtime_error("failed to open file!");
+                                });
   }
-  std::vector<char> buffer(file.tellg());
-  file.seekg(0, std::ios::beg);
-  file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-  file.close();
-  return buffer;
 }
+
 
 void VulkanRenderer::createCommandPool() {
   vk::CommandPoolCreateInfo poolInfo{
@@ -292,14 +86,14 @@ void VulkanRenderer::createCommandBuffers() {
   commandBuffers_ = vk::raii::CommandBuffers(device_->getDevice(), allocInfo);
 }
 
-/// Ghi command buffer: transition layout, begin rendering, bindpipeline, draw,
-/// transition present
+/// Ghi command buffer: transition swapchain image, sample ghi lệnh vẽ,
+/// overlay vẽ đè (nếu có), transition present
 void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
   auto &commandBuffer = commandBuffers_[frameIndex_];
   commandBuffer.begin({});
   // Before starting rendering, transition the swapchain image to
   // COLOR_ATTACHMENT_OPTIMAL
-  transition_image_layout(
+  cmdTransitionImageLayout(commandBuffer,
       swapchain_->getImages()[imageIndex], vk::ImageLayout::eUndefined,
       vk::ImageLayout::eColorAttachmentOptimal,
       {}, // srcAccessMask (no need to wait for previous operations)
@@ -307,78 +101,27 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex) {
       vk::PipelineStageFlagBits2::eColorAttachmentOutput, // srcStage
       vk::PipelineStageFlagBits2::eColorAttachmentOutput, // dstStage
       vk::ImageAspectFlagBits::eColor, 1);
-  // transition for the MSAA color image
-  transition_image_layout(*texture_.getColorImage(),
-                          vk::ImageLayout::eUndefined,
-                          vk::ImageLayout::eColorAttachmentOptimal, {},
-                          vk::AccessFlagBits2::eColorAttachmentWrite,
-                          vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                          vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                          vk::ImageAspectFlagBits::eColor, 1);
-  // transition for the depth image
-  transition_image_layout(*texture_.getDepthImage(),
-                          vk::ImageLayout::eUndefined,
-                          vk::ImageLayout::eDepthAttachmentOptimal,
-                          vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-                          vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-                          vk::PipelineStageFlagBits2::eEarlyFragmentTests |
-                              vk::PipelineStageFlagBits2::eLateFragmentTests,
-                          vk::PipelineStageFlagBits2::eEarlyFragmentTests |
-                              vk::PipelineStageFlagBits2::eLateFragmentTests,
-                          vk::ImageAspectFlagBits::eDepth, 1);
-  vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
-  vk::ClearValue clearDepth = vk::ClearDepthStencilValue{1.0f, 0};
-  vk::RenderingAttachmentInfo attachmentInfo = {
-      .imageView = texture_.getColorView(),
-      .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-      .resolveMode = vk::ResolveModeFlagBits::eAverage,
-      .resolveImageView = swapchain_->getImageViews()[imageIndex],
-      .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-      .loadOp = vk::AttachmentLoadOp::eClear,
-      .storeOp = vk::AttachmentStoreOp::eStore,
-      .clearValue = clearColor,
-  };
-
-  vk::RenderingAttachmentInfo depthAttachmentInfo = {
-      .imageView = texture_.getDepthView(),
-      .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
-      .loadOp = vk::AttachmentLoadOp::eClear,
-      .storeOp = vk::AttachmentStoreOp::eDontCare,
-      .clearValue = clearDepth};
-
-  vk::RenderingInfo renderingInfo = {
-      .renderArea = {.offset = {0, 0}, .extent = swapchain_->getExtent()},
-      .layerCount = 1,
-      .colorAttachmentCount = 1,
-      .pColorAttachments = &attachmentInfo,
-      .pDepthAttachment = &depthAttachmentInfo,
-  };
-
-  commandBuffer.beginRendering(renderingInfo);
-  // VẼ MULTIPLE OBJECTS — mới
-  commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics,
-                             *graphicsPipeline_);
-
-commandBuffer.setViewport(
-      0, vk::Viewport{0.0f, 0.0f,
-              static_cast<float>(swapchain_->getExtent().width),
-              static_cast<float>(swapchain_->getExtent().height), 0.0f, 1.0f});
-  commandBuffer.setScissor(
-      0, vk::Rect2D{vk::Offset2D{0, 0}, swapchain_->getExtent()});
-  // Bind vertex/index buffer 1 lần (chia sẻ giữa các objects)
-  scene_.model().bind(commandBuffer);
-  // Loop draw từng object
-  for (auto &obj : scene_.gameObjects()) {
-    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-                                     pipelineLayout_, 0,
-                                     *obj.descriptorSets[frameIndex_], nullptr);
-    commandBuffer.drawIndexed(scene_.model().getIndexCount(), 1, 0, 0, 0);
+  const SampleFrame frame{.cmd = commandBuffer,
+                          .frameIndex = frameIndex_,
+                          .swapchainView = swapchain_->getImageViews()[imageIndex],
+                          .extent = swapchain_->getExtent()};
+  sample_->record(frame);
+  if (overlay_) {
+    // sample ghi xong vào swapchain image rồi overlay mới vẽ đè lên
+    cmdTransitionImageLayout(
+        commandBuffer, swapchain_->getImages()[imageIndex],
+        vk::ImageLayout::eColorAttachmentOptimal,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::AccessFlagBits2::eColorAttachmentRead |
+            vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::ImageAspectFlagBits::eColor, 1);
+    overlay_(frame);
   }
-  // VẼ PARTICLE SYSTEM
-  particleSystem_.recordDraw(commandBuffer, frameIndex_);
-  commandBuffer.endRendering();
   // After rendering, transition the swapchain image to PRESENT_SRC
-  transition_image_layout(
+  cmdTransitionImageLayout(commandBuffer,
       swapchain_->getImages()[imageIndex],
       vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
       vk::AccessFlagBits2::eColorAttachmentWrite,         // srcAccessMask
@@ -387,34 +130,6 @@ commandBuffer.setViewport(
       vk::PipelineStageFlagBits2::eBottomOfPipe,          // dstStage
       vk::ImageAspectFlagBits::eColor, 1);
   commandBuffer.end();
-}
-
-/// Chuyển đổi layout image bằng VkImageMemoryBarrier2 (Vulkan 1.3
-/// synchronization2)
-void VulkanRenderer::transition_image_layout(
-    vk::Image image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
-    vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask,
-    vk::PipelineStageFlags2 srcStageMask, vk::PipelineStageFlags2 dstStageMask,
-    vk::ImageAspectFlags image_aspect_flags, uint32_t mipLevels) {
-  vk::ImageMemoryBarrier2 barrier = {
-      .srcStageMask = srcStageMask,
-      .srcAccessMask = srcAccessMask,
-      .dstStageMask = dstStageMask,
-      .dstAccessMask = dstAccessMask,
-      .oldLayout = oldLayout,
-      .newLayout = newLayout,
-      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-      .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-      .image = image,
-      .subresourceRange = {.aspectMask = image_aspect_flags,
-                           .baseMipLevel = 0,
-                           .levelCount = mipLevels,
-                           .baseArrayLayer = 0,
-                           .layerCount = 1}};
-  vk::DependencyInfo dependencyInfo = {.dependencyFlags = {},
-                                       .imageMemoryBarrierCount = 1,
-                                       .pImageMemoryBarriers = &barrier};
-  commandBuffers_[frameIndex_].pipelineBarrier2(dependencyInfo);
 }
 
 void VulkanRenderer::createSyncObjects() {
@@ -542,131 +257,6 @@ void VulkanRenderer::createSyncObjects() {
 //   endSingleTimeCommands(commandBuffer);
 // }
 
-/// Tạo uniform buffers với persistent mapping cho toàn bộ vòng đời ứng dụng
-void VulkanRenderer::createUniformBuffers() {
-  // persistent mapping use for all instance through app life time , not remap
-  // effect perf
-  // For each game object
-  for (auto &gameObject : scene_.gameObjects()) {
-    gameObject.uniformBuffers.clear();
-    gameObject.uniformBuffersMemory.clear();
-    gameObject.uniformBuffersMapped.clear();
-
-    // Create uniform buffers for each frame in flight
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-      vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
-      vk::raii::Buffer buffer({});
-      vk::raii::DeviceMemory bufferMem({});
-      memory_->createBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer,
-                            vk::MemoryPropertyFlagBits::eHostVisible |
-                                vk::MemoryPropertyFlagBits::eHostCoherent,
-                            buffer, bufferMem);
-      gameObject.uniformBuffers.emplace_back(std::move(buffer));
-      gameObject.uniformBuffersMemory.emplace_back(std::move(bufferMem));
-      gameObject.uniformBuffersMapped.emplace_back(
-          gameObject.uniformBuffersMemory[i].mapMemory(0, bufferSize));
-    }
-  }
-}
-
-void VulkanRenderer::createDescriptorPool() {
-  // nhan 2 uniform buffer cho compute shader va 1 uniform buffer cho graphics
-  // shader
-std::array poolSize{
-      vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer,
-                              MAX_FRAMES_IN_FLIGHT * MAX_OBJECTS},
-      vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler,
-                              MAX_FRAMES_IN_FLIGHT * MAX_OBJECTS},
-      vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer,
-                              MAX_FRAMES_IN_FLIGHT *
-                                  2}}; // compute SSBO ping-pong
-  vk::DescriptorPoolCreateInfo poolInfo{
-      .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-      .maxSets = MAX_FRAMES_IN_FLIGHT * MAX_OBJECTS,
-      .poolSizeCount = static_cast<uint32_t>(poolSize.size()),
-      .pPoolSizes = poolSize.data()};
-  descriptorPool_ = vk::raii::DescriptorPool(device_->getDevice(), poolInfo);
-}
-
-void VulkanRenderer::createDescriptorSets() {
-  // For each game object
-  for (auto &gameObject : scene_.gameObjects()) {
-    // Create descriptor sets for each frame in flight
-    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT,
-                                                 *descriptorSetLayout_);
-    vk::DescriptorSetAllocateInfo allocInfo{
-        .descriptorPool = *descriptorPool_,
-        .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
-        .pSetLayouts = layouts.data()};
-
-    gameObject.descriptorSets.clear();
-    gameObject.descriptorSets =
-        device_->getDevice().allocateDescriptorSets(allocInfo);
-
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-      vk::DescriptorBufferInfo bufferInfo{.buffer =
-                                              *gameObject.uniformBuffers[i],
-                                          .offset = 0,
-                                          .range = sizeof(UniformBufferObject)};
-      vk::DescriptorImageInfo imageInfo{
-          .sampler = *texture_.getSampler(),
-          .imageView = *texture_.getTextureView(),
-          .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
-      std::array descriptorWrites{
-          vk::WriteDescriptorSet{.dstSet = *gameObject.descriptorSets[i],
-                                 .dstBinding = 0,
-                                 .dstArrayElement = 0,
-                                 .descriptorCount = 1,
-                                 .descriptorType =
-                                     vk::DescriptorType::eUniformBuffer,
-                                 .pBufferInfo = &bufferInfo},
-          vk::WriteDescriptorSet{.dstSet = *gameObject.descriptorSets[i],
-                                 .dstBinding = 1,
-                                 .dstArrayElement = 0,
-                                 .descriptorCount = 1,
-                                 .descriptorType =
-                                     vk::DescriptorType::eCombinedImageSampler,
-                                 .pImageInfo = &imageInfo}};
-      device_->getDevice().updateDescriptorSets(descriptorWrites, {});
-    }
-  }
-}
-
-
-
-/// Cập nhật uniform buffer: model/view/projection matrix mỗi frame
-void VulkanRenderer::updateUniformBuffer(
-    uint32_t currentImage) { // (option)co the dung push constant truyen dl
-                             // thuong xuyen thay doi
-  static auto startTime = std::chrono::high_resolution_clock::now();
-  auto currentTime = std::chrono::high_resolution_clock::now();
-  float time = std::chrono::duration<float>(currentTime - startTime).count();
-  
-  scene_.update(0.0f);
-
-  // Camera and projection matrices (shared by all objects)
-  glm::mat4 view =
-      glm::lookAt(glm::vec3(2.0f, 2.0f, 6.0f), glm::vec3(0.0f, 0.0f, 0.0f),
-                  glm::vec3(0.0f, 1.0f, 0.0f));
-  glm::mat4 proj =
-      glm::perspective(glm::radians(45.0f),
-                       static_cast<float>(swapchain_->getExtent().width) /
-                           static_cast<float>(swapchain_->getExtent().height),
-                       0.1f, 20.0f);
-  proj[1][1] *= -1; // Flip Y for Vulkan
-
-  // Update uniform buffers for each object
-  for (auto &gameObject : scene_.gameObjects()) {
-    // Get the model matrix for this object
-    glm::mat4 model = gameObject.getModelMatrix();
-
-    // Create and update the UBO
-    UniformBufferObject ubo{.model = model, .view = view, .proj = proj};
-
-    // Copy the UBO data to the mapped memory
-    memcpy(gameObject.uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
-  }
-}
 
 /**
  *  step rendering common
@@ -678,69 +268,44 @@ void VulkanRenderer::updateUniformBuffer(
  */
 void VulkanRenderer::drawFrame() {
   /// compute -> semaphore -> graphics -> semaphore -> present
-  // COMPUTE
-  auto computeFenceResult = device_->getDevice().waitForFences(
-      *particleSystem_.computeInFlightFence(frameIndex_), vk::True, UINT64_MAX);
-
-  if (computeFenceResult != vk::Result::eSuccess) {
-    throw std::runtime_error("failed to wait for compute fence!");
-  }
-
-  particleSystem_.updateComputeUniformBuffer(frameIndex_);
-  device_->getDevice().resetFences(
-      *particleSystem_.computeInFlightFence(frameIndex_));
-  // dispatch multithreaded thay cho recordComputeCommandBuffer don gian.
-  // worker threads record song song theo range particle. tra ve N cmd buffers
-  // (N = threadCount_) de submit cung 1 lan.
-  auto computeCmdBuffers = particleSystem_.dispatchMultithreaded(frameIndex_);
-  vk::SubmitInfo computeSubmitInfo{
-      .commandBufferCount = static_cast<uint32_t>(computeCmdBuffers.size()),
-      .pCommandBuffers = computeCmdBuffers.data(),
-      .signalSemaphoreCount = 1,
-      .pSignalSemaphores =
-          &*particleSystem_.computeFinishedSemaphore(frameIndex_)};
-  // mutex bao ve queue.submit() (Vulkan spec: vk::Queue khong thread-safe)
-  {
-    std::lock_guard<std::mutex> lock(queueSubmitMutex_);
-    device_->getGraphicsQueue().submit(
-        computeSubmitInfo, *particleSystem_.computeInFlightFence(frameIndex_));
-  }
-
-  // GRAPHICS
+  // ACQUIRE 
   auto fenceResult = device_->getDevice().waitForFences(
       *inFlightFences_[frameIndex_], vk::True, UINT64_MAX);
   if (fenceResult != vk::Result::eSuccess) {
     throw std::runtime_error("failed to wait for fence!");
   }
-  device_->getDevice().resetFences(*inFlightFences_[frameIndex_]);
 
-  auto [result, imageIndex] = swapchain_->getSwapChain().acquireNextImage(
-      UINT64_MAX, *presentCompleteSemaphores_[frameIndex_], nullptr);
-
-  if (result == vk::Result::eErrorOutOfDateKHR) {
+  vk::Result result;
+  uint32_t imageIndex;
+  try {
+    std::tie(result, imageIndex) = swapchain_->getSwapChain().acquireNextImage(
+        UINT64_MAX, *presentCompleteSemaphores_[frameIndex_], nullptr);
+  } catch (const vk::OutOfDateKHRError &) {
+    // Vulkan-Hpp ném lỗi chứ không trả eErrorOutOfDateKHR. Frame này chưa
+    // submit gì nên tạo lại swapchain rồi bỏ frame là an toàn
     recreateSwapChain();
     return;
   }
-  if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR) {
-    throw std::runtime_error("failed to acquire swap chain image!");
-  }
 
+  // reset sau acquire: nếu return sớm ở trên thì fence vẫn còn signaled
+  device_->getDevice().resetFences(*inFlightFences_[frameIndex_]);
+
+  // COMPUTE: việc GPU riêng của sample (vd particle), graphics chờ semaphore trả về
+  SampleWait sampleWait = sample_->submitBeforeGraphics(frameIndex_);
+  
+  // GRAPHICS
   commandBuffers_[frameIndex_].reset();
   recordCommandBuffer(imageIndex);
-
-  updateUniformBuffer(frameIndex_);
 
   // gui bo dem lenh
   vk::Semaphore waitSemaphores[] = {
       // mảng 2 phần tử
-      *particleSystem_.computeFinishedSemaphore(frameIndex_),
-      *presentCompleteSemaphores_[frameIndex_]};
+      *presentCompleteSemaphores_[frameIndex_],sampleWait.semaphore};
   vk::PipelineStageFlags waitStages[] = {
       // mảng 2 phần tử
-      vk::PipelineStageFlagBits::eVertexInput,
-      vk::PipelineStageFlagBits::eColorAttachmentOutput};
+      vk::PipelineStageFlagBits::eColorAttachmentOutput,sampleWait.stage};
   const vk::SubmitInfo graphicsSubmitInfo{
-      .waitSemaphoreCount = 2,
+      .waitSemaphoreCount = sampleWait.semaphore ? 2u : 1u,
       .pWaitSemaphores = waitSemaphores,
       .pWaitDstStageMask = waitStages,
       .commandBufferCount = 1,
@@ -788,20 +353,18 @@ void VulkanRenderer::drawFrame() {
 }
 
 void VulkanRenderer::cleanupSwapChainResources() {
-  texture_.resetSwapChainResources();
 
   commandBuffers_.clear();
   renderFinishedSemaphores_.clear();
   presentCompleteSemaphores_.clear();
   inFlightFences_.clear();
 
-  particleSystem_.resetSwapChainResources();
 }
 
 void VulkanRenderer::createSwapChainDependentResources() {
-  texture_.recreateSwapChainResources();
   createCommandBuffers();
   createSyncObjects();
+  sample_->onSwapchainRecreated();
 }
 
 /// Tạo lại swapchain khi window resize hoặc swapchain out-of-date
@@ -828,16 +391,9 @@ void VulkanRenderer::recreateSwapChain() {
 }
 
 void VulkanRenderer::cleanup() {
+  device_->getDevice().waitIdle(); // GPU phải chạy xong trước khi hủy buffer, pipeline
   cleanupSwapChainResources();
-  particleSystem_.cleanup();
-  texture_.cleanup();
-  scene_.cleanup();
-
-  descriptorPool_ = nullptr;
-
-  graphicsPipeline_ = nullptr;
-  pipelineLayout_ = nullptr;
-  descriptorSetLayout_ = nullptr;
+  setSample(nullptr);
   memory_.reset();
   commandPool_ = nullptr;
 }
